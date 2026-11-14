@@ -114,8 +114,15 @@ def main(argv):
     # The objects are kept per processor, by the name the compiler resolves native to (apple-m4, znver5): an install moved
     # to another machine rebuilds rather than running instructions its processor may not have.
     cross = (WIN and not HOSTED_WINDOWS) or AND
-    cpu = "generic" if cross else (ENV.get("RECOMP_CPU") or "native")
-    machine = platform.machine().lower()
+    # A cross build defaults to generic because it is usually built for someone else's machine. An
+    # Android build is not: it is packaged for the handheld in front of you, so RECOMP_CPU is honoured
+    # here too -- RECOMP_CPU=cortex-a77 for a Snapdragon 865, say, instead of the armv8-a baseline the
+    # NDK would otherwise compile a recompiled game's million instructions for.
+    cpu = ENV.get("RECOMP_CPU") or ("generic" if cross else "native")
+    # -mcpu names a processor on ARM, -march names one on x86: which applies is the TARGET's
+    # architecture, not the build machine's. Taken from the host, an Android build on an x86-64 desktop
+    # asked clang for "-march=cortex-a77" and every file of the game failed to compile.
+    machine = "aarch64" if AND else platform.machine().lower()
     CPUFLAGS = [] if cpu == "generic" else [("-mcpu=" if machine in ("arm64", "aarch64") else "-march=") + cpu]
     extra = (ENV.get("RECOMP_CFLAGS") or "").split()
     FLAGS = ["-O2", "-ffp-contract=off"] + CPUFLAGS + extra + ["-w"] + INCLUDES
