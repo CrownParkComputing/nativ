@@ -32,6 +32,13 @@ TEST_INPUT = "300-2000:40"
 TEST_TOUCH = "2100-2160:1416,980;4600-4660:960,544"
 TEST_FRAMES = 5000        # the frame the test captures (the main menu, standing)
 TEST_TIMEOUT = 900        # 5000 frames of this game's menus take about 6 minutes headless
+# No reference frame is recorded yet (vitarecomp check SKIPs this title), and it isn't the renderer:
+# two runs of frame 5000 draw the same menu with the same text, but the brushed-metal panel's sheen
+# sweeps across it and lands at a different phase, which is 26% of the pixels. Under RECOMP_CLOCK=fixed
+# guest time follows the frame count, so an animation driven by the guest clock would land identically
+# -- something else is feeding that one. Worth pinning down before this gates, since a gate here would
+# catch nothing until it does.
+# TEST_TOLERANCE = would have to be ~30% to pass, which gates nothing.
 # The gate stops at the menu because gameplay is another 8600 frames -- a quarter of an hour headless,
 # far more than a gate should cost. To drive a run all the way into a game (Arcade > Pure > Normal >
 # planet Alena > the controls card), override the two scripts for that run and give it the time:
