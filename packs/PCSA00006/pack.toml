@@ -1,0 +1,39 @@
+# Super Stardust Delta (PCSA00006, US Vita release) -- Housemarque, the Vita entry in the Super
+# Stardust line. Only facts about the game; nothing of its code or data (the format: pipeline/packconf.py).
+NAME = "Super Stardust Delta"
+# REGION: the release this pack plays (its content id UP9000-PCSA00006_00-SSDELTA000000000, North
+# America); another region's release is another build, not played yet
+REGION = "US"
+BASE = "game"
+SPLIT = 16                # recompiled C split into this many part files; a 0x2e4cfc (3.0 MB) .text, six times TxK's
+# sce_module/libc.suprx (C runtime, libm, the C++ library), the firmware's libgxm and its GPU services
+# library (GXM runs as Sony's code; gxm_sony.c observes its rendering boundary), and libfios2: unlike
+# TxK this eboot really does import SceFios2, and its data is one archive (stream.dat) read through
+# FIOS's dearchiver over the host's sceIo calls (io.c).
+MODULES = "libc libgxm_es4 libgpu_es4 libfios2"
+RUN_ENV = ""              # play: the GPU renderer, the real clock
+TEST_ENV = "RECOMP_GFX=soft RECOMP_CLOCK=fixed"   # the gate renders on the software backend: the reference the GPU path is measured against
+TEST_FRAMES = 600         # provisional: the game stops on its EULA (below), so there is no gate frame worth keeping yet
+
+# WHERE THIS STANDS (2026-11-14). The game boots, runs and draws: 600 frames of real GXM work, its
+# first-run "ONLINE USER AGREEMENT" screen rendered correctly, fonts and all. It gets no further.
+# Established, not guessed:
+#   - the screen ignores every input. Cross does nothing; a scripted touch IS delivered (the game
+#     imports sceTouchPeek, which is the call the script feeds, and RECOMP_LOG_TOUCH=1 shows the
+#     contact reported at the Accept button and released) and nothing happens. The text never
+#     scrolls and the buttons never highlight, so no selection state is running at all.
+#   - no UNIMPL instruction trap has fired, so none of the 679 untranslated instructions is live code.
+#   - 20 imports are unimplemented and all return 0. Nearly all are online and social.
+# The likely cause is in that list: this is the ONLINE agreement, and sceNpInit, sceNpBasicInit,
+# sceNpCheckCallback, sceNpBasicCheckCallback, sceNpGetServiceState and sceNpRegisterServiceStateCallback
+# are all stubs returning 0. A screen that waits for a definite answer about the online service would
+# sit exactly like this. Making those report "signed out, unavailable" rather than success is the
+# next thing to try.
+
+# The build of the game this pack plays: the SHA-256 of its eboot.bin.elf (vitarecomp import tells a
+# copy's version by it). Decrypted 2026-11-14 from a NoNpDrm dump (licence work.bin,
+# UP9000-PCSA00006_00-SSDELTA000000000). Its add-on (SSDELTA000000DLC) carries data but needs no
+# entry here: the runtime grants every add-on the game asks for (runtime/core/apputil.c).
+[versions."1.00"]
+sha256 = "69f04c31b853c4194b4dce18f041315ad1188e8b663dcb527be7cf80cd8e3220"
+status = "supported"      # the game as installed; it has no update
