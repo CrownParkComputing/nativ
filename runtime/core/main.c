@@ -657,6 +657,11 @@ static void builtin_env(void) {
 	if (n) fprintf(stderr, "    the game's built-in settings applied: %d (its pack's RUN_ENV; RECOMP_NO_RUN_ENV=1 skips them)\n", n);
 #endif
 }
+#ifdef __ANDROID__
+/* SDL's activity calls SDL_main, which is platform/android/android_main.c: it reads the arguments a
+ * desktop passes on the command line out of launch.ini and calls this. */
+#define main recomp_host_main
+#endif
 int main(int argc, char **argv) {
 	builtin_env();
 #ifdef __linux__
