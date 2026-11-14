@@ -71,7 +71,11 @@ if [[ -n ${TURNIP_DRIVER:-} ]]; then
   else TURNIP_SO=$TURNIP_DRIVER; fi
   [[ -f ${TURNIP_SO:-} ]] || { echo "no driver .so in $TURNIP_DRIVER" >&2; exit 1; }
   cp "$TURNIP_SO" "$B/lib/arm64-v8a/$(basename "$TURNIP_SO")"
-  echo "   driver: $(basename "$TURNIP_SO") ($(du -h "$TURNIP_SO" | cut -f1))"
+  # ...and the shim that actually opens it, with adrenotools' hooks beside it: they must sit in the
+  # app's nativeLibraryDir, which is this directory once the package is installed
+  bash "$R/runtime/platform/android/build-turnip.sh" >/dev/null
+  cp "$R"/toolchain-android/turnip/lib/*.so "$B/lib/arm64-v8a/"
+  echo "   driver: $(basename "$TURNIP_SO") ($(du -h "$TURNIP_SO" | cut -f1)), through libvkshim.so"
 fi
 
 echo "== packaging"
@@ -110,7 +114,7 @@ MODPATHS=$(for f in $MODS; do printf '%s,' "$GDIR/$f"; done); MODPATHS=${MODPATH
   echo "RECOMP_TITLE=$TITLEID"
   echo "RECOMP_GAME_NAME=$GAMENAME"
   echo "RECOMP_HITCH_LOG=50"
-  [[ -n ${TURNIP_SO:-} ]] && echo "SDL_VULKAN_LIBRARY=$(basename "$TURNIP_SO")"
+  if [[ -n ${TURNIP_SO:-} ]]; then echo "SDL_VULKAN_LIBRARY=libvkshim.so"; echo "RECOMP_VULKAN_DRIVER=$(basename "$TURNIP_SO")"; fi
   for kv in $RUNENV; do echo "$kv"; done
 } > "$B/launch.ini"
 "${ADB[@]}" push -q "$B/launch.ini" "$FILES/launch.ini" >/dev/null
