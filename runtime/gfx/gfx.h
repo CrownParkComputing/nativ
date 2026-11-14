@@ -161,10 +161,11 @@ static inline uint32_t gfx_draw_instance(const GfxDraw *d, uint32_t pos) { retur
  * instanced draws ask for a single instance (their wrap is the whole index count, so every vertex
  * reads record 0), but a few hundred a run draw two, and those do wrap here. */
 static inline uint32_t gfx_draw_index_pos(const GfxDraw *d, uint32_t pos) { return d->index_wrap ? pos % d->index_wrap : pos; }
-/* a draw with any stream read by the instance rather than by the vertex -- true even for a single
- * instance, where every vertex reads record 0. The backend paths that keep one record per distinct
- * vertex index, or let the shader fetch straight from the stream by vertex index, cannot serve it. */
-static inline int gfx_draw_instanced(const GfxDraw *d) { for (int i = 0; i < 16; i++) if (d->stream_src[i] >= 2) return 1; return 0; }
+/* a draw of MORE than one instance: its instance streams step per instance, so the backend paths that
+ * keep one record per distinct vertex index, or let the shader fetch by vertex index, cannot serve it.
+ * A single-instance draw is not one of these -- gxm_sony.c gives its instance streams a stride of 0,
+ * which reads record 0 everywhere and needs nothing special of anyone. */
+static inline int gfx_draw_instanced(const GfxDraw *d) { return d->index_wrap != 0; }
 /* the index an attribute's stream is read by: its instance when the stream is an instance source */
 static inline uint32_t gfx_attr_index(const GfxDraw *d, const GfxAttr *a, uint32_t ix, uint32_t inst) {
 	return a->stream < 16 && d->stream_src[a->stream] >= 2 ? inst : ix;

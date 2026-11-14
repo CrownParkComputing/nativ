@@ -237,7 +237,7 @@ static void check_draw(uint32_t cx, const GfxDraw *d, uint32_t vp, uint32_t fp, 
 		if (s >= d->nstream) issue("attribute %d reads stream %d, past the program's %d streams", k, s, d->nstream);
 		else if (!d->stream[s]) issue("attribute %d reads stream %d, which is unbound%s", k, s, pv ? " (precomputed vertex state bound)" : "");
 		else if (!mapped(d->stream[s], 4)) issue("stream %d: data %#x not in guest memory", s, d->stream[s]);
-		else if (!d->stride[s]) issue("stream %d: stride 0", s);
+		else if (!d->stride[s] && d->stream_src[s] < 2) issue("stream %d: stride 0", s);   /* (an instance stream of a one-instance draw is deliberately 0: draw()) */
 	}
 	uint32_t vgxp = d->vprog, fgxp = d->fprog;
 	if (is_gxp(vgxp) && RD32(vgxp + 0x64) && !d->vuniforms) issue("vertex program needs a default uniform buffer (%u words) but none is %s", RD32(vgxp + 0x64), pv ? "in the precomputed state" : "reserved");
@@ -350,6 +350,13 @@ static void draw(uint32_t cx, const uint32_t *stream, uint32_t prim, uint32_t in
 	/* 0: one instance, which is what every draw did before. Only a draw that actually reads a stream
 	 * by the instance takes a wrap from the caller, so a word that isn't one can't start it off. */
 	d.index_wrap = instance_stream && index_wrap && index_wrap < count ? index_wrap : 0;
+	/* A draw of a SINGLE instance reads record 0 of an instance stream for every vertex -- which is
+	 * exactly what a stride of 0 means. Saying it that way keeps every fetch path (the vertex packer,
+	 * the shader's own fetch prologue, the stream copy) both correct and on its fast route; without it
+	 * these draws fell back to packing one record per index on the CPU, and Super Stardust Delta spent
+	 * 10-15 ms a frame in vfetch alone. Only a draw of more than one instance needs the slow path. */
+	if (instance_stream && !d.index_wrap)
+		for (int i = 0; i < d.nstream; i++) if (d.stream_src[i] >= 2) d.stride[i] = 0;
 	/* RECOMP_LOG_VSTREAMS=<presented frame>: that frame's draws with each stream's {stride, index
 	 * source} as SceGxmVertexStream holds them -- index source 2/3 is an INSTANCE stream */
 	{	static long lf = -2; if (lf == -2) { const char *e = getenv("RECOMP_LOG_VSTREAMS"); lf = e ? atol(e) : -1; }
