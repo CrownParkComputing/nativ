@@ -2264,23 +2264,43 @@ SpirvModule usse_spirv_translate(const UsseProgram *prog, const UsseVertexLayout
 				g.pcf_dv = fop2(s, SpvOpFMul, pcf_step[1], c_float(s, (float)(tap / side) - (float)(side - 1) * 0.5f));
 			}
 		}
-		struct { int end; uint32_t merge; } brstack[8]; int nbr = 0;
+		/* els: the if/else form's else-block label, while the then-block is still being emitted (0: a plain if) */
+		struct { int end; uint32_t merge; uint32_t els; } brstack[8]; int nbr = 0;
 		for (int i = 0; i < n && ok; i++) {
 			const UOp *op = &code[i];
 			while (nbr && brstack[nbr - 1].end <= i) { INS(&s->func, SpvOpBranch, brstack[nbr - 1].merge); INS(&s->func, SpvOpLabel, brstack[nbr - 1].merge); nbr--; }
 			if (op->op == OP_BR) {
 				int target = i + (int)op->imm;
+				/* the else arm's jump: the unconditional forward branch that closes the then-block of an
+				 * if/else recognised below. The then-block ends here and the else-block starts at the
+				 * conditional branch's target, running to this branch's -- one selection, two arms. */
+				if (op->pred_kind == 0 && nbr && brstack[nbr - 1].els && i == brstack[nbr - 1].end - 1 && op->imm > 0 && !op->args[0]) {
+					INS(&s->func, SpvOpBranch, brstack[nbr - 1].merge);
+					INS(&s->func, SpvOpLabel, brstack[nbr - 1].els);
+					brstack[nbr - 1].end = target; brstack[nbr - 1].els = 0;
+					continue;
+				}
 				if (op->pred_kind == 0 || op->imm <= 0 || op->args[0] || target > n || (nbr && target > brstack[nbr - 1].end) || nbr >= 8) {
 					snprintf(m.err, sizeof m.err, "branch at instruction %d (%s, offset %d) outside the structured forms translated", i, op->pred_kind ? "predicated" : "unconditional", (int)op->imm); ok = 0; break;
+				}
+				/* if/else: the skipped range's last instruction is itself an unconditional forward branch,
+				 * so that range is the then-arm and what it jumps over is the else-arm. SPIR-V needs the
+				 * merge block named on OpSelectionMerge, before either arm is emitted, so it is found here
+				 * rather than when that branch is reached. (A nested block ending exactly at target leaves
+				 * its own entry on top there, with no els, and that branch is refused above: conservative.) */
+				int els_end = 0;
+				if (target - 1 > i && code[target - 1].op == OP_BR && code[target - 1].pred_kind == 0 && code[target - 1].imm > 0 && !code[target - 1].args[0]) {
+					int t2 = (target - 1) + (int)code[target - 1].imm;
+					if (t2 > target && t2 <= n && (!nbr || t2 <= brstack[nbr - 1].end)) els_end = t2;
 				}
 				uint32_t p = load(s, t_bool(s), pred_ptr(&g, op->pred_reg));
 				uint32_t taken = op->pred_kind == 1 ? p : result1(s, &s->func, SpvOpLogicalNot, t_bool(s), p);
 				uint32_t run = result1(s, &s->func, SpvOpLogicalNot, t_bool(s), taken);   /* the skipped range runs when the branch is NOT taken */
-				uint32_t then = nid(s), merge = nid(s);
+				uint32_t then = nid(s), merge = nid(s), els = els_end ? nid(s) : 0;
 				INS(&s->func, SpvOpSelectionMerge, merge, 0 /*None*/);
-				INS(&s->func, SpvOpBranchConditional, run, then, merge);
+				INS(&s->func, SpvOpBranchConditional, run, then, els ? els : merge);
 				INS(&s->func, SpvOpLabel, then);
-				brstack[nbr].end = target; brstack[nbr].merge = merge; nbr++;
+				brstack[nbr].end = target; brstack[nbr].merge = merge; brstack[nbr].els = els; nbr++;
 				continue;
 			}
 			/* (pN) / (!pN) predication: the instruction runs inside a structured if on the predicate

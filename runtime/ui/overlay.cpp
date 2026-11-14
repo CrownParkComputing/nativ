@@ -70,7 +70,7 @@ void display_set_paused(int on);
 /* window.c */
 int window_get_aspect(void); void window_set_aspect(int mode);
 int window_get_fullscreen(void); void window_set_fullscreen(int on);
-int window_raw_look(void); void window_set_raw_look(int on);
+int window_raw_look(void); void window_set_raw_look(int on); int window_mouse_look(void);
 int window_controls_count(void);
 int window_gyro_present(void);
 void motion_recenter(void);
@@ -444,7 +444,7 @@ static void page_controls(void) {
 			if (ui::segmented(names, 3, &v)) { settings_set_str("input_mode", ids[v]); settings_save(); }
 		}
 		ui::row("Mouse look", "The mouse turns the camera and aims; left button R, right button L.");
-		{ bool look = settings_int("mouse_look", 1) != 0; if (ui::toggle("ml", &look)) { settings_set_int("mouse_look", look ? 1 : 0); settings_save(); } }
+		{ bool look = window_mouse_look() != 0; if (ui::toggle("ml", &look)) { settings_set_int("mouse_look", look ? 1 : 0); settings_save(); } }
 		ui::row("Mouse aim", "Direct: the game turns exactly as far as the mouse moves (games with direct aim; the others use Stick by themselves). Stick: the mouse moves the right stick. F8 switches.");
 		{ static const char *const names[2] = {"Direct##ma", "Stick##ma"}; int v = window_raw_look() ? 0 : 1; if (ui::segmented(names, 2, &v)) window_set_raw_look(v == 0); }
 		ui::row("Mouse sensitivity");

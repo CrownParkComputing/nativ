@@ -204,6 +204,13 @@ int window_mouse_invert(void) { return settings_int("mouse_invert", 0) != 0; }
  * motion to the stick stand-in above by itself, so it never takes the mouse look away. Off: always the stand-in, which
  * the stick's own curve and speed make stepped and late (a fresh install's Killzone, 2026-10-22). A scripted run
  * (RECOMP_HEADLESS) keeps the stand-in, as its recorded input was made with */
+/* RECOMP_MOUSE_LOOK=0 (a pack's RUN_ENV): the pointer is not captured in a game that has no mouse
+ * aiming at all, where a capture only traps it (TxK: buttons and the touch screen, nothing to aim).
+ * It sets the DEFAULT, so the menu's own Mouse look toggle still decides once the player has used it. */
+int window_mouse_look(void) {
+	const char *e = getenv("RECOMP_MOUSE_LOOK");
+	return settings_int("mouse_look", e ? atoi(e) != 0 : 1) != 0;
+}
 static int raw_look = -1;
 int window_raw_look(void) {
 	if (raw_look < 0) raw_look = getenv("RECOMP_RAW_LOOK") ? atoi(getenv("RECOMP_RAW_LOOK")) != 0 : settings_int("raw_look", getenv("RECOMP_HEADLESS") ? 0 : 1) != 0;   /* (RECOMP_RAW_LOOK: a test's) */
@@ -1060,7 +1067,7 @@ void window_run(void *(*fn)(void *), void *arg) {
 			/* the mouse moved for real over the picture while the pad had the input (auto mode): back to keyboard +
 			 * mouse, so the capture returns at once -- it used to wait for a key, the pointer loose and stopping at
 			 * the window's edges after any touch of the pad (Alt still frees it; a nudge under a few points doesn't count) */
-			if (!rel_on && e.type == SDL_EVENT_MOUSE_MOTION && !overlay_mouse_captured() && settings_int("mouse_look", 1) &&
+			if (!rel_on && e.type == SDL_EVENT_MOUSE_MOTION && !overlay_mouse_captured() && window_mouse_look() &&
 			    fabsf(e.motion.xrel) + fabsf(e.motion.yrel) > 3.0f && !(SDL_GetModState() & SDL_KMOD_ALT)) { kbm_auto = 1; snprintf(kbm_why, sizeof kbm_why, "the mouse, not captured"); }
 			if (rel_on && (e.type == SDL_EVENT_MOUSE_MOTION || e.type == SDL_EVENT_MOUSE_BUTTON_DOWN || e.type == SDL_EVENT_MOUSE_BUTTON_UP)) {   /* captured: the look, and R / L */
 				if (e.type == SDL_EVENT_MOUSE_MOTION && now_us() - rel_since_us < 60000) continue;
@@ -1123,7 +1130,7 @@ void window_run(void *(*fn)(void *), void *arg) {
 			if (on != kbm_on) { extern uint64_t display_frames(void); fprintf(stderr, "    input: %s (%s%s, frame %llu)\n", on ? "keyboard and mouse" : "the controller", strcmp(mode, "auto") ? "Play with: " : "", strcmp(mode, "auto") ? mode : kbm_why[0] ? kbm_why : "start", (unsigned long long)display_frames()); }
 			if (on && !kbm_on && !said) { said = 1; overlay_toast_titled("Keyboard & mouse", "The mouse looks and aims -- hold [Alt] for the cursor\nControls: [F10]", 6.0); }
 			kbm_on = on;
-			int want = (on || (window_raw_look() && !pstv)) && settings_int("mouse_look", 1) && !overlay_is_open() && !overlay_dialog_active() && win && (SDL_GetWindowFlags(win) & SDL_WINDOW_INPUT_FOCUS) && !(SDL_GetModState() & SDL_KMOD_ALT);
+			int want = (on || (window_raw_look() && !pstv)) && window_mouse_look() && !overlay_is_open() && !overlay_dialog_active() && win && (SDL_GetWindowFlags(win) & SDL_WINDOW_INPUT_FOCUS) && !(SDL_GetModState() & SDL_KMOD_ALT);
 			/* SDL's own state, not just ours: the system can drop the capture behind our back (a focus change as
 			 * the window opens, say) and rel_on then claimed a capture that wasn't there -- the pointer showed,
 			 * left the window and stopped tracking at its edge. Re-applied whenever the two disagree. */
