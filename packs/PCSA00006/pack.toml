@@ -16,30 +16,53 @@ MODULES = "libc libgxm_es4 libgpu_es4 libfios2"
 # hle.c installs hle_np/hle_net/hle_http/hle_ssl_local ONLY for a game run online -- without this they
 # all report "not implemented" and return 0, which is not what this game expects.
 RUN_ENV = "RECOMP_GAME_OPTIONS=online"
-TEST_ENV = "RECOMP_GFX=soft RECOMP_CLOCK=fixed"   # the gate renders on the software backend: the reference the GPU path is measured against
-TEST_FRAMES = 600         # provisional: the game stops on its EULA (below), so there is no gate frame worth keeping yet
+# the gate renders on the GPU, not the software backend: gfx_soft.c's name-matched stand-in shaders
+# know none of this game's vertex programs, so every draw is skipped ("no position attribute, draw
+# skipped") and the frame comes out plain white. RECOMP_SHADERS=interp renders it properly but is far
+# too slow for a gate. RECOMP_ONLINE=1: a headless run is offline unless it says otherwise (net.c), and
+# offline the NP imports above go back to reporting "not implemented" -- the game never reaches its EULA.
+TEST_ENV = "RECOMP_GFX=gpu RECOMP_CLOCK=fixed RECOMP_ONLINE=1"
+# A scripted run from a fresh file system (no saves, so the first-run EULA is always shown) to the main
+# menu. The EULA is a scrolling document and its Accept button does nothing until the text has been read
+# to the end -- holding d-pad down (hex Vita mask 40) scrolls it, ~1700 frames to the last clause, and the
+# "more below" arrow under the text goes out when there is no more. Then: Accept (the touch panel's
+# coordinates are the Vita's own, 1920x1088, double the 960x544 screen), "Touch to Start" on the title
+# screen, and Play -> the main menu.
+TEST_INPUT = "300-2000:40"
+TEST_TOUCH = "2100-2160:1416,980;4600-4660:960,544"
+TEST_FRAMES = 5000        # the frame the test captures (the main menu, standing)
+TEST_TIMEOUT = 900        # 5000 frames of this game's menus take about 6 minutes headless
 
-# WHERE THIS STANDS (2026-11-14). The game boots, runs and draws: real GXM work every frame, its
-# first-run "ONLINE USER AGREEMENT" screen rendered correctly, fonts and all. It gets no further --
-# the screen never responds to anything. What has been RULED OUT, each measured, not assumed:
-#   - touch delivery. The game imports sceTouchPeek, which is the call RECOMP_TOUCH/TEST_TOUCH feeds,
-#     and RECOMP_LOG_TOUCH=1 shows the contact reported at the Accept button and released again.
-#   - the input loop running at all. An import log (RECOMP_LOG_FROM) shows sceTouchPeek,
-#     sceCtrlPeekBufferPositive, sceMotionGetState, sceCommonDialogUpdate and sceDisplaySetFrameBuf
-#     each called exactly once a frame: the game's update loop is turning.
-#   - the enter button. sceAppUtilSystemParamGetInt(2) already answers 1, cross (apputil.c).
-#   - the dialogs. All 13 of its SceCommonDialog imports are implemented.
-#   - the NP service. With online on (above) every NP import it makes is implemented.
-#   - its add-ons. addcont0:SSDELTA000000DLC/dlc.dat and .../SSDELTA000000DBG/debug.dat are opened and
-#     not found; supplying them as empty markers (RECOMP_ADDCONT_MARKERS) changes nothing. The real
-#     DLC is in the dump and still encrypted -- vitarecomp add treats an add-on as entitlement-only.
-#   - a dead screen. 14 of 16 sampled frames differ: both buttons carry a moving sheen.
-#   - any untranslated instruction: no UNIMPL trap has ever fired.
-# One real stall WAS found and fixed on the way (runtime/net/np.c): the game called
+# WHERE THIS STANDS (2026-11-14). The game boots, draws, and plays: EULA -> title -> main menu ->
+# Arcade > Pure > Normal > planet Alena -> the controls card -> gameplay, with the planet, the hex
+# shield, the HUD (lives, bombs, countdown, multiplier, weapon overdrive) and "Phase 1 / 5" all correct
+# and the score counting up. Two things were settled getting there:
+#   - The EULA was never stuck. It wants its text scrolled to the end before Accept arms, which is what
+#     the screen's own "more below" arrow says. Nothing was wrong with the runtime: the earlier scripted
+#     taps never reached the game, because `vitarecomp test` sets RECOMP_TOUCH from the pack's TEST_TOUCH
+#     *after* EXTRA_ENV, so an EXTRA_ENV RECOMP_TOUCH is overwritten by the pack's (then empty) one. Set
+#     TEST_TOUCH in the environment to script a touch for one run, never RECOMP_TOUCH.
+#   - It ran as the trial. sceAppUtilAppParamGetInt was unimplemented, which returns success without
+#     writing the value, and parameter 0 is the SKU flag: the game read the zero as a demo ("Trial
+#     Version" over the title, "Not available in demo version" on every mode, difficulty and planet but
+#     the first). apputil.c now answers 3, SCE_APPUTIL_APPPARAM_SKU_FLAG_FULL, and all of it unlocks
+#     into the game's own progression text ("Complete planet Alena to unlock this planet").
+# OPEN: in-game geometry. The menus and the HUD are pixel-right, but in play some draws come out as huge
+# stretched triangles across the screen -- red, green and silver shards that swamp the playfield. The GPU
+# backend reports nothing: no shader it failed to translate, no unsupported format, no UNIMPL trap. It
+# looks like one vertex program fed garbage positions, so the next step is a frame capture in play
+# (vitarecomp capture) replayed against the interpreter (RECOMP_SHADERS=interp) to see which program and
+# which attribute. Until that is fixed there is no gameplay frame worth gating on, so TEST_FRAMES stops
+# at the main menu and no reference frame is recorded yet.
+# What has been RULED OUT along the way, each measured, not assumed: touch delivery (RECOMP_LOG_TOUCH
+# shows every contact); the update loop (sceTouchPeek, sceCtrlPeekBufferPositive, sceMotionGetState,
+# sceCommonDialogUpdate and sceDisplaySetFrameBuf each once a frame); the enter button
+# (sceAppUtilSystemParamGetInt(2) answers cross); the dialogs (all 13 SceCommonDialog imports); the NP
+# service; its add-ons (addcont0:SSDELTA000000DLC/dlc.dat and .../SSDELTA000000DBG/debug.dat are opened
+# and not found, and empty markers change nothing); and any untranslated instruction (no UNIMPL trap has
+# ever fired). One real stall was found and fixed on the way (runtime/net/np.c): the game called
 # sceNpScoreCreateTitleCtx once a frame forever, because a context id has to be positive and an
-# unimplemented import returns 0. That loop is gone and the screen still blocks, so it was not this.
-# Left to try: trace what the EULA's own code does with the contact it is handed (RECOMP_TRACE_DRAW or
-# the profiler build), rather than guessing at more imports.
+# unimplemented import returns 0.
 
 # The build of the game this pack plays: the SHA-256 of its eboot.bin.elf (vitarecomp import tells a
 # copy's version by it). Decrypted 2026-11-14 from a NoNpDrm dump (licence work.bin,

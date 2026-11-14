@@ -483,8 +483,19 @@ static void h_app_param_string(Cpu *c) {
 	const char *t = getenv("RECOMP_TITLE"); snprintf((char *)G(A2), A3, "%s", t ? t : "");
 	RET(0);
 }
+/* sceAppUtilAppParamGetInt(id, *value): the game's own parameters. 0 is the SKU flag, and a copy
+ * installed from a real package is the full game (SCE_APPUTIL_APPPARAM_SKU_FLAG_FULL, 3), never the
+ * trial (1). Unimplemented it returned success and left the value alone, so Super Stardust Delta read
+ * the zero there as a demo: "Trial Version" over its title screen, and "Not available in demo
+ * version" on every planet, mode and difficulty but the first. Anything else is
+ * SCE_APPUTIL_ERROR_PARAMETER, as on the console. */
+static void h_app_param_int(Cpu *c) {
+	if (A0 != 0 || !A1) { RET(0x80100600u); return; }
+	WR32(A1, 3); RET(0);
+}
 const HleEntry hle_apputil[] = {
 	{"sceAppMgrAppParamGetString", h_app_param_string},
+	{"sceAppUtilAppParamGetInt", h_app_param_int},
 	{"sceAppMgrReceiveSystemEvent", h_receive_system_event},
 	{"sceAppUtilSystemParamGetInt", h_system_param_int}, {"_sceAppMgrGetAppState", h_app_state}, {"sceSysmoduleIsLoaded", h_zero_ok},
 	{"sceAppUtilSystemParamGetString", h_system_param_string},
