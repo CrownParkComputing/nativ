@@ -234,6 +234,22 @@ static void h_np_lookup_profile(Cpu *c) {   /* (req, npId, userInfo, aboutMe, la
 }
 static void h_np_lookup_poll(Cpu *c) { if (A1) WR32(A1, 0); RET(0); }   /* finished, result 0 */
 
+/* ---- scores (SceNpScore) and activity (SceNpActivity): the leaderboards a game posts to, with no
+ * server behind them. Everything succeeds and every board comes back empty, which is what a game
+ * sees when it is signed in and nobody has a rank yet -- a game that treats a FAILURE here as "try
+ * again" otherwise sits in a retry loop: Super Stardust Delta called sceNpScoreCreateTitleCtx once a
+ * frame forever, because a context id must be POSITIVE and an unimplemented import returned 0. */
+static uint32_t next_score_ctx = 1;
+static void h_np_score_ctx(Cpu *c) { RET(__atomic_fetch_add(&next_score_ctx, 1, __ATOMIC_RELAXED)); }   /* a title context, then a request on it: both positive ids */
+/* sceNpScoreGetRankingByRange / ...ByNpId: an empty board. Its out parameters (the rank array, the
+ * last sort date, the total record count) are past r0-r3 and this signature has not been checked
+ * against a real caller, so nothing is written through them -- a handler writing through a stack
+ * argument that is not there is exactly what main.c's crash note describes. A game reads back what
+ * it passed in, which is its own zeroed buffer. Revisit when a game actually shows a board. */
+static void h_np_score_ranking(Cpu *c) { RET(0); }
+
+
+
 /* ---- the NP common library's internals Sony's own np_matching2 calls (KZ_NP_MODULES), read from the 3.74 np_common.suprx */
 /* sceNpCommonGetNpEnviroment(char env[16]): the NP environment the console is on; "np" is retail (np_common keeps it in a
  * global the system sets at start: "rc" in the module's data before that). Server names are built from it */
@@ -316,5 +332,10 @@ const HleEntry hle_np[] = {
 	{"sceNpLookupInit", h_np_zero}, {"sceNpLookupTerm", h_np_zero}, {"sceNpLookupCreateTitleCtx", h_np_lookup_create}, {"sceNpLookupDeleteTitleCtx", h_np_zero},
 	{"sceNpLookupCreateRequest", h_np_lookup_create}, {"sceNpLookupDeleteRequest", h_np_zero}, {"sceNpLookupAbortRequest", h_np_zero},
 	{"sceNpLookupUserProfileAsync", h_np_lookup_profile}, {"sceNpLookupPollAsync", h_np_lookup_poll},
+	{"sceNpScoreInit", h_np_zero}, {"sceNpScoreTerm", h_np_zero},
+	{"sceNpScoreCreateTitleCtx", h_np_score_ctx}, {"sceNpScoreDeleteTitleCtx", h_np_zero},
+	{"sceNpScoreCreateRequest", h_np_score_ctx}, {"sceNpScoreDeleteRequest", h_np_zero}, {"sceNpScoreAbortRequest", h_np_zero},
+	{"sceNpScoreRecordScore", h_np_zero}, {"sceNpScoreGetRankingByRange", h_np_score_ranking}, {"sceNpScoreGetRankingByNpId", h_np_score_ranking},
+	{"sceNpActivityInit", h_np_zero}, {"sceNpActivityTerm", h_np_zero}, {"sceNpActivityPostStatus", h_np_zero},
 	{0, 0},
 };

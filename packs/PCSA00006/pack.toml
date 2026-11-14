@@ -11,24 +11,35 @@ SPLIT = 16                # recompiled C split into this many part files; a 0x2e
 # TxK this eboot really does import SceFios2, and its data is one archive (stream.dat) read through
 # FIOS's dearchiver over the host's sceIo calls (io.c).
 MODULES = "libc libgxm_es4 libgpu_es4 libfios2"
-RUN_ENV = ""              # play: the GPU renderer, the real clock
+# play: the GPU renderer, the real clock. RECOMP_GAME_OPTIONS=online: the game's NP imports (sceNpInit,
+# sceNpCheckCallback, sceNpGetServiceState, the score boards) are implemented in runtime/net/np.c, but
+# hle.c installs hle_np/hle_net/hle_http/hle_ssl_local ONLY for a game run online -- without this they
+# all report "not implemented" and return 0, which is not what this game expects.
+RUN_ENV = "RECOMP_GAME_OPTIONS=online"
 TEST_ENV = "RECOMP_GFX=soft RECOMP_CLOCK=fixed"   # the gate renders on the software backend: the reference the GPU path is measured against
 TEST_FRAMES = 600         # provisional: the game stops on its EULA (below), so there is no gate frame worth keeping yet
 
-# WHERE THIS STANDS (2026-11-14). The game boots, runs and draws: 600 frames of real GXM work, its
-# first-run "ONLINE USER AGREEMENT" screen rendered correctly, fonts and all. It gets no further.
-# Established, not guessed:
-#   - the screen ignores every input. Cross does nothing; a scripted touch IS delivered (the game
-#     imports sceTouchPeek, which is the call the script feeds, and RECOMP_LOG_TOUCH=1 shows the
-#     contact reported at the Accept button and released) and nothing happens. The text never
-#     scrolls and the buttons never highlight, so no selection state is running at all.
-#   - no UNIMPL instruction trap has fired, so none of the 679 untranslated instructions is live code.
-#   - 20 imports are unimplemented and all return 0. Nearly all are online and social.
-# The likely cause is in that list: this is the ONLINE agreement, and sceNpInit, sceNpBasicInit,
-# sceNpCheckCallback, sceNpBasicCheckCallback, sceNpGetServiceState and sceNpRegisterServiceStateCallback
-# are all stubs returning 0. A screen that waits for a definite answer about the online service would
-# sit exactly like this. Making those report "signed out, unavailable" rather than success is the
-# next thing to try.
+# WHERE THIS STANDS (2026-11-14). The game boots, runs and draws: real GXM work every frame, its
+# first-run "ONLINE USER AGREEMENT" screen rendered correctly, fonts and all. It gets no further --
+# the screen never responds to anything. What has been RULED OUT, each measured, not assumed:
+#   - touch delivery. The game imports sceTouchPeek, which is the call RECOMP_TOUCH/TEST_TOUCH feeds,
+#     and RECOMP_LOG_TOUCH=1 shows the contact reported at the Accept button and released again.
+#   - the input loop running at all. An import log (RECOMP_LOG_FROM) shows sceTouchPeek,
+#     sceCtrlPeekBufferPositive, sceMotionGetState, sceCommonDialogUpdate and sceDisplaySetFrameBuf
+#     each called exactly once a frame: the game's update loop is turning.
+#   - the enter button. sceAppUtilSystemParamGetInt(2) already answers 1, cross (apputil.c).
+#   - the dialogs. All 13 of its SceCommonDialog imports are implemented.
+#   - the NP service. With online on (above) every NP import it makes is implemented.
+#   - its add-ons. addcont0:SSDELTA000000DLC/dlc.dat and .../SSDELTA000000DBG/debug.dat are opened and
+#     not found; supplying them as empty markers (RECOMP_ADDCONT_MARKERS) changes nothing. The real
+#     DLC is in the dump and still encrypted -- vitarecomp add treats an add-on as entitlement-only.
+#   - a dead screen. 14 of 16 sampled frames differ: both buttons carry a moving sheen.
+#   - any untranslated instruction: no UNIMPL trap has ever fired.
+# One real stall WAS found and fixed on the way (runtime/net/np.c): the game called
+# sceNpScoreCreateTitleCtx once a frame forever, because a context id has to be positive and an
+# unimplemented import returns 0. That loop is gone and the screen still blocks, so it was not this.
+# Left to try: trace what the EULA's own code does with the contact it is handed (RECOMP_TRACE_DRAW or
+# the profiler build), rather than guessing at more imports.
 
 # The build of the game this pack plays: the SHA-256 of its eboot.bin.elf (vitarecomp import tells a
 # copy's version by it). Decrypted 2026-11-14 from a NoNpDrm dump (licence work.bin,
