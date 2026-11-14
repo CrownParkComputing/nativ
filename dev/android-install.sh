@@ -50,6 +50,30 @@ cp "$AT/SDL3/lib/libSDL3.so" "$B/lib/arm64-v8a/"
 cp "$OUT/libmain.so" "$B/lib/arm64-v8a/"
 cp "$NDK/toolchains/llvm/prebuilt/linux-x86_64/sysroot/usr/lib/aarch64-linux-android/libc++_shared.so" "$B/lib/arm64-v8a/"
 
+# TURNIP_DRIVER=<libvulkan_freedreno.so | a Mesa Turnip .zip>: ship that driver in the package and
+# point SDL at it instead of the system Vulkan (SDL_VULKAN_LIBRARY, read from the environment that
+# launch.ini sets). The stock Adreno driver on a Retroid Pocket Flip2 reports Vulkan 1.1; Turnip
+# reports 1.3. The driver is a third-party binary supplied by you and is not part of this project.
+#
+# NOT ENOUGH ON ITS OWN, and measured as such: SDL dlopens that path in the app's own linker
+# namespace, which may load only the platform's public libraries, and Turnip needs libhardware.so,
+# which is not one of them (/system/etc/public.libraries*.txt lists libnativewindow, libsync, libz,
+# liblog, libm, libdl, libc -- all of its other NEEDEDs -- but not libhardware). The load fails and
+# SDL_GPU reports "No supported SDL_GPU backend found". Loading it takes libadrenotools'
+# linkernsbypass, in a namespace that can see /system/lib64 and /vendor/lib64; since SDL takes a path
+# and dlopens it itself, the way to keep SDL stock is a small shim library in the package that does
+# that load and re-exports vkGetInstanceProcAddr. Until that shim exists, leave TURNIP_DRIVER unset.
+TURNIP_SO=
+if [[ -n ${TURNIP_DRIVER:-} ]]; then
+  if [[ $TURNIP_DRIVER == *.zip ]]; then
+    TD=$B/turnip; mkdir -p "$TD"; unzip -o -q "$TURNIP_DRIVER" -d "$TD"
+    TURNIP_SO=$(find "$TD" -name 'libvulkan_*.so' | head -1)
+  else TURNIP_SO=$TURNIP_DRIVER; fi
+  [[ -f ${TURNIP_SO:-} ]] || { echo "no driver .so in $TURNIP_DRIVER" >&2; exit 1; }
+  cp "$TURNIP_SO" "$B/lib/arm64-v8a/$(basename "$TURNIP_SO")"
+  echo "   driver: $(basename "$TURNIP_SO") ($(du -h "$TURNIP_SO" | cut -f1))"
+fi
+
 echo "== packaging"
 "$BT/aapt2" link -I "$PLAT/android.jar" --manifest "$R/android/AndroidManifest.xml" \
     --min-sdk-version 28 --target-sdk-version 35 -o "$B/base.apk" >/dev/null
@@ -86,6 +110,7 @@ MODPATHS=$(for f in $MODS; do printf '%s,' "$GDIR/$f"; done); MODPATHS=${MODPATH
   echo "RECOMP_TITLE=$TITLEID"
   echo "RECOMP_GAME_NAME=$GAMENAME"
   echo "RECOMP_HITCH_LOG=50"
+  [[ -n ${TURNIP_SO:-} ]] && echo "SDL_VULKAN_LIBRARY=$(basename "$TURNIP_SO")"
   for kv in $RUNENV; do echo "$kv"; done
 } > "$B/launch.ini"
 "${ADB[@]}" push -q "$B/launch.ini" "$FILES/launch.ini" >/dev/null

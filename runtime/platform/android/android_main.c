@@ -67,7 +67,9 @@ int main(int argc, char **argv) {
 		if (!strcmp(k, "image")) snprintf(image, sizeof image, "%s", v);
 		else if (!strcmp(k, "entry")) snprintf(entry, sizeof entry, "%s", v);
 		else if (!strcmp(k, "budget")) snprintf(budget, sizeof budget, "%s", v);
-		else if (!strncmp(k, "RECOMP_", 7)) setenv(k, v, 1);
+		/* SDL_ too: SDL reads its hints from the environment, and SDL_VULKAN_LIBRARY is how a
+		 * different Vulkan driver (Mesa's Turnip, say) is chosen over the system one */
+		else if (!strncmp(k, "RECOMP_", 7) || !strncmp(k, "SDL_", 4)) setenv(k, v, 1);
 	}
 	fclose(f);
 	if (!image[0] || !entry[0]) { fprintf(stderr, "android: %s needs image= and entry=\n", ini); return 1; }
