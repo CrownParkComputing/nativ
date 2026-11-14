@@ -157,8 +157,9 @@ typedef struct {
 static inline uint32_t gfx_draw_instance(const GfxDraw *d, uint32_t pos) { return d->index_wrap ? pos / d->index_wrap : 0; }
 /* ...and the position in the index list it reads: the list wraps every index_wrap entries, each pass
  * over it being the next instance. index_wrap is 0 unless it is shorter than the draw, so this is the
- * identity for every draw that isn't drawing a mesh more than once. Super Stardust Delta asks for one
- * instance (its wrap is its whole index count), so the game at hand never takes the wrapping path. */
+ * identity for every draw that isn't drawing a mesh more than once. Most of Super Stardust Delta's
+ * instanced draws ask for a single instance (their wrap is the whole index count, so every vertex
+ * reads record 0), but a few hundred a run draw two, and those do wrap here. */
 static inline uint32_t gfx_draw_index_pos(const GfxDraw *d, uint32_t pos) { return d->index_wrap ? pos % d->index_wrap : pos; }
 /* a draw with any stream read by the instance rather than by the vertex -- true even for a single
  * instance, where every vertex reads record 0. The backend paths that keep one record per distinct

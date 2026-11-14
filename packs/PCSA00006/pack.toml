@@ -62,7 +62,10 @@ TEST_TIMEOUT = 900        # 5000 frames of this game's menus take about 6 minute
 #     translation and colour. gxm_sony.c read only the stride out of SceGxmVertexStream and dropped
 #     the index source, so every vertex read a different record: each triangle was stretched between
 #     three instances' positions. Both backends now read an instance stream by the instance
-#     (runtime/gfx: gfx.h, gfx_soft.c, gfx_gpu.c), and the frame renders correctly. Caught by
+#     (runtime/gfx: gfx.h, gfx_soft.c, gfx_gpu.c), and the frame renders correctly. Coverage over a
+#     gameplay run counts 11,524 single-instance draws (their wrap is the whole index count, so every
+#     vertex reads record 0) and 311 two-instance ones, which are the draws that wrap the index list.
+#     Caught by
 #     replaying one captured frame against BOTH backends: the software interpreter drew the same
 #     shards as the GPU, which ruled out the renderer and the shader translator and put it in what
 #     the draw was given. RECOMP_LOG_VSTREAMS=<frame> prints each draw's streams and index sources.

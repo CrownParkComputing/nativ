@@ -37,6 +37,7 @@ the log (Shovel Knight's are `ycAssert` texts).
 | `RECOMP_SHOT=n` | Save frame n as an image. `SHOT_EVERY` (with `vitarecomp test`) saves every nth. |
 | `RECOMP_SHOT_FROM=a`, `RECOMP_SHOT_TO=b` | Limit shots to a window of frames: every frame of a flicker, without a whole run's worth. |
 | `RECOMP_DUMP_FRAME=n` | Log every draw of frame n. |
+| `RECOMP_LOG_VSTREAMS=n` | Frame n's draws with each vertex stream's stride **and index source** as `SceGxmVertexStream` holds them (2 or 3 means the stream is read by the instance, not the vertex), its attributes, and each precomputed draw's VDM words. Super Stardust Delta's ship and asteroids were smeared across the screen until this showed their transform stream was an instance one. |
 | `RECOMP_INPUT=from-to:mask,...` | Scripted buttons by frame range. |
 | `RECOMP_TOUCH=from-to:x,y;...` | Scripted front-panel touches by frame range (panel coordinates, 1920x1088). |
 | `RECOMP_INPUT_RECORD=<file>`, `RECOMP_INPUT_PLAY=<file>` | Record every controller, touch and motion read during play, then serve it back headlessly. This is how a moment deep in a mission becomes a repeatable run. |
