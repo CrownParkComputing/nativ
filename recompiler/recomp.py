@@ -557,6 +557,16 @@ class Fn:
             cont, es, nb = int(mn[4:]) // 8, int(dt) // 8, 8 * cnt
             return [f"{{ uint8_t t[16], o[16]; memcpy(t, &c->vfp.d[{b0}], {nb}); for (int k = 0; k < {nb}; k += {cont}) for (int e = 0; e < {cont // es}; e++)"
                     f" memcpy(o + k + e * {es}, t + k + ({cont // es - 1} - e) * {es}, {es}); memcpy(&c->vfp.d[{a0}], o, {nb}); }}"]
+        if mn == "vzip" and dt in ("8", "16", "32") and len(regs) == 2 and regs[0][0] == regs[1][0]:
+            # interleave, vuzp's inverse: the elements of dD and dM (or qD, qM) alternated a0 b0 a1 b1 ...,
+            # the first half of that back into D and the second into M. Super Stardust Delta's audio
+            # (Wwise) hits vzip.16 q12, q13 the moment a level starts, and an untranslated instruction
+            # stops the thread dead: the game froze on the first frame of play.
+            (a0, cnt), (b0, _) = dbytes(regs[0]), dbytes(regs[1])
+            es, nb = int(dt) // 8, 8 * cnt
+            return [f"{{ uint8_t a[16], b[16], o[32]; memcpy(a, &c->vfp.d[{a0}], {nb}); memcpy(b, &c->vfp.d[{b0}], {nb});"
+                    f" for (int e = 0; e < {nb // es}; e++) {{ memcpy(o + 2 * e * {es}, a + e * {es}, {es}); memcpy(o + (2 * e + 1) * {es}, b + e * {es}, {es}); }}"
+                    f" memcpy(&c->vfp.d[{a0}], o, {nb}); memcpy(&c->vfp.d[{b0}], o + {nb}, {nb}); }}"]
         if mn == "vuzp" and dt in ("8", "16", "32") and len(regs) == 2 and regs[0][0] == regs[1][0]:
             # de-interleave: of the elements of dD then dM (or qD, qM), the even ones into D and the odd ones into M
             (a0, cnt), (b0, _) = dbytes(regs[0]), dbytes(regs[1])

@@ -15,7 +15,11 @@ MODULES = "libc libgxm_es4 libgpu_es4 libfios2"
 # sceNpCheckCallback, sceNpGetServiceState, the score boards) are implemented in runtime/net/np.c, but
 # hle.c installs hle_np/hle_net/hle_http/hle_ssl_local ONLY for a game run online -- without this they
 # all report "not implemented" and return 0, which is not what this game expects.
-RUN_ENV = "RECOMP_GAME_OPTIONS=online"
+# RECOMP_MOUSE_LOOK=0: this game aims nothing with the mouse -- the ship is the sticks, and its menus,
+# its EULA and its "Touch to Start" are the touch screen -- so the pointer is never captured and a left
+# click is a touch, not the R trigger. Captured (the default), clicking Accept on the EULA fired R and
+# the screen appeared not to respond. Only the default: the F10 menu's Mouse look toggle still wins.
+RUN_ENV = "RECOMP_GAME_OPTIONS=online RECOMP_MOUSE_LOOK=0"
 # the gate renders on the GPU, not the software backend: gfx_soft.c's name-matched stand-in shaders
 # know none of this game's vertex programs, so every draw is skipped ("no position attribute, draw
 # skipped") and the frame comes out plain white. RECOMP_SHADERS=interp renders it properly but is far

@@ -191,6 +191,21 @@ def model(st, insns):
             e = ux(st.reg(names[1]) >> (bits * ops[1].vector_index), bits) if names[1][0] == "d" else ux(st.r[recomp.GPR[names[1]]], bits)
             st.setreg(D, pack([e] * (width(D) // bits), bits)); continue
         W = width(D)
+        if mn in ("vzip", "vuzp") and len(names) == 2 and names[1] and names[1][0] == D[0]:
+            # VZIP interleaves the two registers' elements (a0 b0 a1 b1 ...); VUZP is its inverse, the
+            # concatenation's even elements then its odd ones. Either way the first half of the result
+            # goes back to D and the second half to M. (At .32 on D registers both are VTRN.32, and
+            # these formulas agree with it.)
+            a, b = elems(st.reg(D), W, bits), elems(st.reg(names[1]), W, bits)
+            if mn == "vzip": r = [x for pair in zip(a, b) for x in pair]
+            else: r = (a + b)[0::2] + (a + b)[1::2]
+            st.setreg(D, pack(r[:len(a)], bits)); st.setreg(names[1], pack(r[len(a):], bits)); continue
+        if mn == "vtrn" and len(names) == 2 and names[1] and names[1][0] == D[0]:
+            # transpose: each odd element of D changes places with the even element beside it in M.
+            # (This is what capstone calls VZIP.32 / VUZP.32 on D registers, which are the same thing.)
+            a, b = list(elems(st.reg(D), W, bits)), list(elems(st.reg(names[1]), W, bits))
+            for k in range(len(a) // 2): a[2 * k + 1], b[2 * k] = b[2 * k], a[2 * k + 1]
+            st.setreg(D, pack(a, bits)); st.setreg(names[1], pack(b, bits)); continue
         if mn in ("vraddhn", "vaddhn", "vrsubhn", "vsubhn"):
             a, b = elems(st.reg(names[1]), 128, bits), elems(st.reg(names[2]), 128, bits)
             rnd = (1 << (bits // 2 - 1)) if mn[1] == "r" else 0
@@ -301,6 +316,10 @@ CASES = [
     ("vshrn.i16 d0, q1, #3", None), ("vshrn.i16 d0, q1, #8", None), ("vshrn.i32 d0, q1, #16", None), ("vshrn.i32 d5, q3, #1", None), ("vshrn.i64 d0, q1, #32", None),
     ("vmov.u16 r0, d3[2]", None), ("vmov.s16 r1, d3[1]", None), ("vmov.u8 r2, d4[0]", None), ("vmov.s8 r3, d4[7]", None), ("vmov.u16 r4, d9[3]", None),
     # the forms the games hit (Uncharted, Unit 13) and their siblings
+    # vzip.16 q12, q13 is Super Stardust Delta's audio, and froze it the moment a level started
+    ("vzip.16 q12, q13", None), ("vzip.8 d0, d1", None), ("vzip.16 d2, d3", None), ("vzip.32 d4, d5", None),
+    ("vzip.8 q0, q1", None), ("vzip.32 q2, q3", None), ("vzip.16 d7, d7", None),
+    ("vuzp.16 q12, q13", None), ("vuzp.8 d0, d1", None), ("vuzp.32 q2, q3", None), ("vuzp.8 q4, q5", None),
     ("vmin.u32 d4, d4, d5", None), ("vmax.u32 d4, d4, d27", None), ("vmin.s32 q0, q1, q2", None), ("vmax.s16 d0, d1, d2", None),
     ("vmin.u8 q3, q4, q5", None), ("vmax.s8 d9, d10, d11", None), ("vmin.u16 d0, d0, d0", None),
     ("vcgt.u8 d15, d16, d8", None), ("vcge.u8 d15, d16, d4", None), ("vcgt.s8 q0, q1, q2", None), ("vcge.s16 d0, d1, d2", None),
