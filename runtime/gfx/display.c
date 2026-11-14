@@ -132,6 +132,7 @@ uint64_t display_frames(void) { return frames; }   /* presented frames so far (m
 static uint64_t vb_now(void); static uint64_t vb_setbuf;   /* below: the vblank grid */
 static void vb_sleep_to_edge(uint64_t edge);   /* (below) */
 static uint32_t swap_seen;      /* the largest swap interval a SetFrameBuf wait asked for since the last SetFrameBuf: how long that frame stays up */
+static int uses_setbuf_wait;    /* the game has asked a SetFrameBuf wait at least once (vb_wait_setbuf): its flip is paced against the edge the present lands on, so presenting at that edge costs it nothing */
 static uint64_t present_edge;   /* the edge the last frame went to the window at (h_set_frame_buf) */
 /* SceDisplayFrameBuf: size, base, pitch, pixel format, width, height */
 /* RECOMP_HITCH_LOG=ms: every presented frame that took longer than that (SetFrameBuf to SetFrameBuf, real time)
@@ -189,7 +190,12 @@ static void h_set_frame_buf(Cpu *c) {
 	 * (headless runs and the gate pace as before); RECOMP_PRESENT_AT_VBLANK=0|1 overrides. */
 	{ static int at_vb = -1; if (at_vb < 0) { extern int window_active(void); const char *e = getenv("RECOMP_PRESENT_AT_VBLANK"); at_vb = e && *e ? atoi(e) != 0 : window_active(); }
 	  uint32_t hold = swap_seen ? swap_seen : 1; swap_seen = 0;
-	  if (at_vb) { uint64_t edge = vb_setbuf + 1; if (present_edge && present_edge + hold > edge) edge = present_edge + hold; vb_sleep_to_edge(edge); present_edge = edge; }
+	  /* ...and only for a game that paces its flip against that edge. A game that instead waits
+	   * WaitVblankStartMulti(n) from its OWN last target (Super Stardust Delta: SetFrameBuf then
+	   * Multi(1), and never a SetFrameBuf wait) is delayed by the slot rather than lined up by it --
+	   * the sleep here takes one edge and its own wait then takes the next, two edges a frame, and the
+	   * game ran at exactly 30 fps in a window while headless, where this is off, it ran at 60. */
+	  if (at_vb && uses_setbuf_wait) { uint64_t edge = vb_setbuf + 1; if (present_edge && present_edge + hold > edge) edge = present_edge + hold; vb_sleep_to_edge(edge); present_edge = edge; }
 	  static int ptrace = -1; if (ptrace < 0) ptrace = getenv("RECOMP_PRESENT_TRACE") != 0;   /* RECOMP_PRESENT_TRACE=1: each present's distance from the one before (the cadence the window gets) */
 	  static uint64_t plast; uint64_t pnow = raw_us(); if (ptrace && plast) fprintf(stderr, "    present: +%.1f ms (set +%.1f ms)\n", (pnow - plast) / 1e3, hitch_dur / 1e3); plast = pnow; }
 	int b = sched_block_begin();   /* presenting is the display hardware's work: no run slot meanwhile (RECOMP_SCHED) */
@@ -289,6 +295,11 @@ static void h_wait_vblank_multi(Cpu *c) {
 	uint32_t n = A0 ? A0 : 1; if (n > 8) n = 8;
 	uint64_t now = vb_now(), base = vb_last_target && vb_last_target + n > now ? vb_last_target : now;
 	if (getenv("RECOMP_VBLANK_TRACE")) { static int k; if (k++ < 40) fprintf(stderr, "    vblank wait multi(%u): last %llu now %llu\n", n, (unsigned long long)vb_last_target, (unsigned long long)now); }
+	/* every CHANGE of the interval a game asks for, always: this is the whole of its frame pacing when
+	 * it flips with SetFrameBuf + WaitVblankStartMulti and never WaitSetFrameBufMulti (Super Stardust
+	 * Delta), and then RECOMP_FRAME_RATE -- which only caps the SetFrameBuf waits -- cannot move it. */
+	{ static uint32_t last_n; if (n != last_n) { last_n = n;
+		fprintf(stderr, "    vblank: the game now asks %u edge%s a wait (%u fps) at frame %llu\n", n, n == 1 ? "" : "s", 60 / n, (unsigned long long)frames); } }
 	vb_wait_until(base + n, n); RET(0);
 }
 /* The SetFrameBuf waits are a condition, not a fresh wait: until the frame buffer set last has been
@@ -299,6 +310,7 @@ static void h_wait_vblank_multi(Cpu *c) {
  * SetFrameBuf, WaitSetFrameBuf, so Multi(1)'s edge (setbuf + 1) was always just reached and got
  * bumped to the one after -- 30 fps whatever n said. The fixed clock counts the n vblanks either way. */
 static void vb_wait_setbuf(uint64_t target, uint32_t count) {
+	uses_setbuf_wait = 1;
 	if (clock_fixed()) count = (uint32_t)setbuf_guest_count(count);
 	if (target > vb_now()) { vb_wait_until(target, count); return; }
 	reads_in_row = 0;
@@ -409,6 +421,7 @@ static void h_wait_vblank_multi_cb(Cpu *c) {
 /* the CB forms of the SetFrameBuf waits: the same "already up: return" rule (vb_wait_setbuf), with the
  * pending callbacks delivered; under the fixed clock they keep their edge-by-edge callback rounds */
 static void vb_wait_setbuf_cb(Cpu *c, uint64_t target, uint32_t count) {
+	uses_setbuf_wait = 1;
 	if (clock_fixed()) {   /* the guest's vblanks still to go, edge by edge with their callback rounds; none: the callbacks only */
 		count = (uint32_t)setbuf_guest_count(count);
 		if (count) vb_wait_until_cb(c, target, count); else { kernel_check_callbacks(c); vb_last_target = vb_now(); }
