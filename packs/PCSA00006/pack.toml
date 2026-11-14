@@ -32,11 +32,20 @@ TEST_INPUT = "300-2000:40"
 TEST_TOUCH = "2100-2160:1416,980;4600-4660:960,544"
 TEST_FRAMES = 5000        # the frame the test captures (the main menu, standing)
 TEST_TIMEOUT = 900        # 5000 frames of this game's menus take about 6 minutes headless
+# The gate stops at the menu because gameplay is another 8600 frames -- a quarter of an hour headless,
+# far more than a gate should cost. To drive a run all the way into a game (Arcade > Pure > Normal >
+# planet Alena > the controls card), override the two scripts for that run and give it the time:
+#   TIMEOUT=2400 TEST_FRAMES=13800 TEST_INPUT="300-2000:40" \
+#   TEST_TOUCH="2100-2160:1416,980;4600-4660:960,544;5200-5260:500,256;5700-5760:840,320;6300-6360:840,620;7000-7060:840,620;9500-9560:840,320;13000-13060:1780,980" \
+#   vitarecomp test PCSA00006
+# Gameplay starts around frame 13200. A capture of a frame in play (vitarecomp capture PCSA00006 13600,
+# with those same overrides and RECOMP_CAPTURE_FRAMES=4 -- one frame alone can catch a present with no
+# draws in it) replays in seconds and is how the instancing bug below was found and fixed.
 
 # WHERE THIS STANDS (2026-11-14). The game boots, draws, and plays: EULA -> title -> main menu ->
 # Arcade > Pure > Normal > planet Alena -> the controls card -> gameplay, with the planet, the hex
 # shield, the HUD (lives, bombs, countdown, multiplier, weapon overdrive) and "Phase 1 / 5" all correct
-# and the score counting up. Two things were settled getting there:
+# and the score counting up. Three things were settled getting there:
 #   - The EULA was never stuck. It wants its text scrolled to the end before Accept arms, which is what
 #     the screen's own "more below" arrow says. Nothing was wrong with the runtime: the earlier scripted
 #     taps never reached the game, because `vitarecomp test` sets RECOMP_TOUCH from the pack's TEST_TOUCH
@@ -47,13 +56,16 @@ TEST_TIMEOUT = 900        # 5000 frames of this game's menus take about 6 minute
 #     Version" over the title, "Not available in demo version" on every mode, difficulty and planet but
 #     the first). apputil.c now answers 3, SCE_APPUTIL_APPPARAM_SKU_FLAG_FULL, and all of it unlocks
 #     into the game's own progression text ("Complete planet Alena to unlock this planet").
-# OPEN: in-game geometry. The menus and the HUD are pixel-right, but in play some draws come out as huge
-# stretched triangles across the screen -- red, green and silver shards that swamp the playfield. The GPU
-# backend reports nothing: no shader it failed to translate, no unsupported format, no UNIMPL trap. It
-# looks like one vertex program fed garbage positions, so the next step is a frame capture in play
-# (vitarecomp capture) replayed against the interpreter (RECOMP_SHADERS=interp) to see which program and
-# which attribute. Until that is fixed there is no gameplay frame worth gating on, so TEST_FRAMES stops
-# at the main menu and no reference frame is recorded yet.
+#   - In-game geometry came out as huge stretched shards, and it was instancing. The game draws its
+#     ship, its debris and its asteroids with a second vertex stream whose SceGxmIndexSource is an
+#     INSTANCE one (sceGxmPrecomputedDrawSetParamsInstanced), carrying that instance's rotation rows,
+#     translation and colour. gxm_sony.c read only the stride out of SceGxmVertexStream and dropped
+#     the index source, so every vertex read a different record: each triangle was stretched between
+#     three instances' positions. Both backends now read an instance stream by the instance
+#     (runtime/gfx: gfx.h, gfx_soft.c, gfx_gpu.c), and the frame renders correctly. Caught by
+#     replaying one captured frame against BOTH backends: the software interpreter drew the same
+#     shards as the GPU, which ruled out the renderer and the shader translator and put it in what
+#     the draw was given. RECOMP_LOG_VSTREAMS=<frame> prints each draw's streams and index sources.
 # What has been RULED OUT along the way, each measured, not assumed: touch delivery (RECOMP_LOG_TOUCH
 # shows every contact); the update loop (sceTouchPeek, sceCtrlPeekBufferPositive, sceMotionGetState,
 # sceCommonDialogUpdate and sceDisplaySetFrameBuf each once a frame); the enter button

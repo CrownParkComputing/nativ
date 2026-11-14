@@ -330,7 +330,7 @@ static int8_t clamp8(int v) { return (int8_t)(v < -128 ? -128 : v > 127 ? 127 : 
 /* a diagnostic switch, read once: getenv walks the environment, and the draw observers called it on every draw (1.4% of
  * Uncharted's main thread, 2026-11-01) */
 static int env_flag(const char *name, int *v) { if (*v < 0) *v = getenv(name) != 0; return *v; }
-static void draw(uint32_t cx, const uint32_t *stream, uint32_t prim, uint32_t index_format, uint32_t indices, uint32_t count) {
+static void draw(uint32_t cx, const uint32_t *stream, uint32_t prim, uint32_t index_format, uint32_t indices, uint32_t count, uint32_t index_wrap) {
 	GfxDraw d;
 	memset(&d, 0, sizeof d);
 	uint32_t pv = RD32(cx + CX_PVSTATE), pf = RD32(cx + CX_PFSTATE);
@@ -341,7 +341,29 @@ static void draw(uint32_t cx, const uint32_t *stream, uint32_t prim, uint32_t in
 	d.nattr = (int)RD32(vp + 0x5c); if (d.nattr > 16) d.nattr = 16;
 	memcpy(d.attr, G(RD32(vp + 0x58)), 8 * d.nattr);
 	d.nstream = (int)RD32(vp + 0x64); if (d.nstream > 16) d.nstream = 16;
-	for (int i = 0; i < d.nstream; i++) d.stride[i] = RD16(RD32(vp + 0x60) + 4 * i);
+	int instance_stream = 0;
+	for (int i = 0; i < d.nstream; i++) {
+		d.stride[i] = RD16(RD32(vp + 0x60) + 4 * i);
+		d.stream_src[i] = (uint8_t)RD16(RD32(vp + 0x60) + 4 * i + 2);   /* SceGxmIndexSource: 2/3 read this stream by the instance */
+		if (d.stream_src[i] >= 2) instance_stream = 1;
+	}
+	/* 0: one instance, which is what every draw did before. Only a draw that actually reads a stream
+	 * by the instance takes a wrap from the caller, so a word that isn't one can't start it off. */
+	d.index_wrap = instance_stream && index_wrap && index_wrap < count ? index_wrap : 0;
+	/* RECOMP_LOG_VSTREAMS=<presented frame>: that frame's draws with each stream's {stride, index
+	 * source} as SceGxmVertexStream holds them -- index source 2/3 is an INSTANCE stream */
+	{	static long lf = -2; if (lf == -2) { const char *e = getenv("RECOMP_LOG_VSTREAMS"); lf = e ? atol(e) : -1; }
+		extern uint64_t display_frames(void);
+		if (lf >= 0 && (long)display_frames() == lf) {
+			static int n;
+			if (n++ < 40) {
+				fprintf(stderr, "    vstreams: draw %d vprog %#x nattr %d nstream %d count %u:", n, RD32(vp), d.nattr, d.nstream, count);
+				for (int i = 0; i < d.nstream; i++) fprintf(stderr, " s%d{stride %u, index source %u}", i, RD16(RD32(vp + 0x60) + 4 * i), RD16(RD32(vp + 0x60) + 4 * i + 2));
+				for (int k = 0; k < d.nattr; k++) fprintf(stderr, "  a%d(stream %u off %u f%u c%u)", k, d.attr[k].stream, d.attr[k].offset, d.attr[k].format, d.attr[k].comps);
+				fprintf(stderr, "\n");
+			}
+		}
+	}
 	memcpy(d.stream, stream, sizeof d.stream);
 	/* fragment program: GXP +0, the blend info copy at [+0x68] (0: no blending) */
 	d.fprog = RD32(fp);
@@ -446,11 +468,14 @@ static void streams_of(uint32_t cx, uint32_t *s) { for (int i = 0; i < 16; i++) 
 
 static void o_draw(Cpu *c) {   /* sceGxmDraw(context, primitive, index format, indices, count) */
 	uint32_t s[16]; streams_of(A0, s);
-	draw(A0, s, A1, A2, A3, STK(0));
+	draw(A0, s, A1, A2, A3, STK(0), 0);
 }
-static void o_draw_instanced(Cpu *c) {   /* (context, primitive, index format, indices, count, index wrap): one instance, as gxm.c */
+/* sceGxmDrawInstanced(context, primitive, index format, indices, count, index wrap): the index list is
+ * read straight through as always, and the instance number steps every `index wrap` indices -- the
+ * streams whose SceGxmIndexSource is an INSTANCE one are read by it instead of by the vertex index. */
+static void o_draw_instanced(Cpu *c) {
 	uint32_t s[16]; streams_of(A0, s);
-	draw(A0, s, A1, A2, A3, STK(0));
+	draw(A0, s, A1, A2, A3, STK(0), STK(1));
 }
 /* sceGxmDrawPrecomputed(context, draw): the draw keeps its parameters only as the six VDM words at
  * +0x14 and its streams patched into its PDS fetch instance ([+4]) through the vertex program's
@@ -464,10 +489,17 @@ static void o_draw_precomputed(Cpu *c) {
 		uint32_t si = RD16(table + 8 * k);
 		if (si < 16) s[si] = RD32(inst + 4 * RD32(table + 8 * k + 4)) - RD16(table + 8 * k + 2);
 	}
+	{	static long lf = -2; if (lf == -2) { const char *e = getenv("RECOMP_LOG_VSTREAMS"); lf = e ? atol(e) : -1; }
+		extern uint64_t display_frames(void);
+		if (lf >= 0 && (long)display_frames() == lf) { static int n;
+			if (n++ < 40) fprintf(stderr, "    precomputed draw %d: pd %#x vdm %08x %08x %08x %08x %08x %08x\n", n, pd,
+			                      RD32(pd + 0x14), RD32(pd + 0x18), RD32(pd + 0x1c), RD32(pd + 0x20), RD32(pd + 0x24), RD32(pd + 0x28)); } }
 	/* the draw's own vertex program stands in for the context's when no precomputed vertex state says otherwise */
 	uint32_t saved = RD32(A0 + CX_VPROG);
 	if (!RD32(A0 + CX_PVSTATE)) WR32(A0 + CX_VPROG, vp);
-	draw(A0, s, w0 & 0x1c000000u, RD32(pd + 0x1c) & 0x01000000u, RD32(pd + 0x18) & ~1u, w0 & 0x3fffff);
+	/* the instance wrap sceGxmPrecomputedDrawSetParamsInstanced leaves in the VDM words (0 from the
+	 * plain setter; the whole count when a game asks for a single instance) */
+	draw(A0, s, w0 & 0x1c000000u, RD32(pd + 0x1c) & 0x01000000u, RD32(pd + 0x18) & ~1u, w0 & 0x3fffff, RD32(pd + 0x20));
 	WR32(A0 + CX_VPROG, saved);
 }
 

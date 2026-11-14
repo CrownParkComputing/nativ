@@ -143,6 +143,15 @@ static void draw_features(const GfxDraw *d, uint32_t units) {
 	named(v, sizeof v, (d->prim & ~0x1c000000u) == 0 && pk < 6 ? prim[pk] : 0, d->prim);
 	feat("prim", v, pok, pok, pok ? 0 : "draw skipped");
 	feat("index", d->index_format ? "U32" : "U16", YES, YES, 0);
+	/* a stream read by the instance rather than the vertex (SceGxmVertexStream's index source), and
+	 * whether the draw asks for more than one instance. Both backends read instance streams by the
+	 * instance; the GPU path serves such a draw from the CPU packer, since neither its per-vertex
+	 * record cache nor its shader-side fetch has an instance to index by. */
+	if (gfx_draw_instanced(d)) {
+		int many = d->index_wrap && d->index_wrap < d->count;
+		snprintf(v, sizeof v, many ? "%u instances" : "1 instance", many ? d->count / (d->index_wrap ? d->index_wrap : 1) : 1);
+		feat("instancing", v, YES, YES, many ? "the index list wraps every index_wrap entries, each pass the next instance" : 0);
+	}
 	/* SceGxmCullMode: gfx_soft.c culls (checked against itself with culling compiled out: an opaque
 	 * 3D scene's hidden-by-depth-test back faces don't move a pixel either way); gfx_gpu.c's own
 	 * winding convention against this isn't pinned down yet (see its get_pipeline), so it still

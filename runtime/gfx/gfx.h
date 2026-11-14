@@ -139,7 +139,35 @@ typedef struct {
 	 * blood) lean on it to win against the wall they lie on; without it they z-fought and flashed in and out. 0 in an
 	 * old capture. */
 	int8_t depth_bias_factor, depth_bias_units;
+	/* instancing (sceGxmDrawInstanced, sceGxmPrecomputedDrawSetParamsInstanced). index_wrap is the
+	 * number of indices that make ONE instance: the index list is still read straight through, but
+	 * the instance number steps every index_wrap positions. stream_src is each vertex stream's
+	 * SceGxmIndexSource (SceGxmVertexStream +2, which the draw used to read only the stride of):
+	 * 0/1 index the stream by the VERTEX index, 2/3 by the INSTANCE number. Both 0 in an old
+	 * capture, which is exactly one instance indexed by the vertex -- what every draw did before.
+	 * Super Stardust Delta draws its ship, its debris and its asteroids this way, and without these
+	 * each vertex of a triangle read a different instance's transform: the mesh was stretched
+	 * between the instances' positions, in shards across the screen. */
+	uint32_t index_wrap;
+	uint8_t stream_src[16];
 } GfxDraw;
+
+/* the instance a position in the index list belongs to (0 everywhere when the wrap covers the whole
+ * draw, which is how a game asks for a single instance) */
+static inline uint32_t gfx_draw_instance(const GfxDraw *d, uint32_t pos) { return d->index_wrap ? pos / d->index_wrap : 0; }
+/* ...and the position in the index list it reads: the list wraps every index_wrap entries, each pass
+ * over it being the next instance. index_wrap is 0 unless it is shorter than the draw, so this is the
+ * identity for every draw that isn't drawing a mesh more than once. Super Stardust Delta asks for one
+ * instance (its wrap is its whole index count), so the game at hand never takes the wrapping path. */
+static inline uint32_t gfx_draw_index_pos(const GfxDraw *d, uint32_t pos) { return d->index_wrap ? pos % d->index_wrap : pos; }
+/* a draw with any stream read by the instance rather than by the vertex -- true even for a single
+ * instance, where every vertex reads record 0. The backend paths that keep one record per distinct
+ * vertex index, or let the shader fetch straight from the stream by vertex index, cannot serve it. */
+static inline int gfx_draw_instanced(const GfxDraw *d) { for (int i = 0; i < 16; i++) if (d->stream_src[i] >= 2) return 1; return 0; }
+/* the index an attribute's stream is read by: its instance when the stream is an instance source */
+static inline uint32_t gfx_attr_index(const GfxDraw *d, const GfxAttr *a, uint32_t ix, uint32_t inst) {
+	return a->stream < 16 && d->stream_src[a->stream] >= 2 ? inst : ix;
+}
 
 /* GfxDraw.prim is the SceGxmPrimitiveType exactly as the game passed it to sceGxmDraw (and as
  * sceGxmDrawPrecomputed keeps it in its VDM word): 0x00000000 triangles, 0x04000000 lines,
@@ -247,7 +275,7 @@ void gfx_vis_write(uint32_t addr, uint32_t count);   /* a visibility counter's r
 void gfx_soft_use_interp(void);   /* the software path on the shader interpreter, whatever RECOMP_SHADERS says */
 
 /* gfx_soft.c's vertex-attribute-fetch/pack (§1.11), shared with gfx_gpu.c: see its definition */
-void gfx_fetch_vertex_pa(const GfxDraw *d, const UsseVertexLayout *vl, uint32_t ix, UsseInst *inst);
+void gfx_fetch_vertex_pa(const GfxDraw *d, const UsseVertexLayout *vl, uint32_t ix, uint32_t inst_ix, UsseInst *inst);
 int gfx_draw_clip_bounds(const GfxDraw *d, int samples, float out[6]);
 /* the same extent over EVERY vertex of a draw of up to GFX_BOUNDS_MAX indices, in three steps so the vertex program runs can
  * go to another thread: prepare (render thread: the program, its secondary, each distinct vertex's PA words copied; 0 can't,
@@ -259,14 +287,14 @@ GfxBoundsJob *gfx_bounds_job_new(void);
 int gfx_bounds_prepare(GfxBoundsJob *j, const GfxDraw *d);
 void gfx_bounds_run(GfxBoundsJob *j);
 int gfx_bounds_result(GfxBoundsJob *j, float out[6]);   /* a draw's NDC extent and w range, its vertex program run on the CPU for up to `samples` of its vertices (gfx_soft.c) */
-void gfx_fetch_vertex_pa_words(const GfxDraw *d, const UsseVertexLayout *vl, uint32_t ix, uint32_t *out, int npa);   /* the first npa PA words only (gfx_gpu.c's vertex record) */
+void gfx_fetch_vertex_pa_words(const GfxDraw *d, const UsseVertexLayout *vl, uint32_t ix, uint32_t inst_ix, uint32_t *out, int npa);   /* the first npa PA words only (gfx_gpu.c's vertex record) */
 /* the same packing with the per-draw decisions (slot lookups, types, strides) made once: a plan per
  * attribute, then one call per vertex writing npa words -- the GPU backend packs hundreds of
  * thousands of vertices a frame */
-typedef struct { uint32_t base, stride; uint16_t reg; uint8_t fmt, comps, dcomps, kind, rawlen; } GfxPackAttr;   /* kind: 1 raw bytes, 2 F32 lanes, 3 F16 lanes */
+typedef struct { uint32_t base, stride; uint16_t reg; uint8_t fmt, comps, dcomps, kind, rawlen, instanced; } GfxPackAttr;   /* kind: 1 raw bytes, 2 F32 lanes, 3 F16 lanes; instanced: its stream is read by the instance, not the vertex */
 typedef struct { GfxPackAttr a[32]; int n, npa, slow, index_reg, instance_reg; const GfxDraw *d; const UsseVertexLayout *vl; } GfxVertexPacker;
 void gfx_vertex_packer_init(GfxVertexPacker *pk, const GfxDraw *d, const UsseVertexLayout *vl, int npa);
-void gfx_vertex_pack(const GfxVertexPacker *pk, uint32_t ix, uint32_t *out);
+void gfx_vertex_pack(const GfxVertexPacker *pk, uint32_t ix, uint32_t inst_ix, uint32_t *out);
 /* gfx_soft.c's texture format/swizzle/block-compression/PVRTC decode, bulk (one texel() call per
  * pixel) instead of per-sample -- for gfx_gpu.c's texture upload; see its definition */
 void gfx_decode_texture_rgba8(const GfxTexture *t, uint8_t *out);

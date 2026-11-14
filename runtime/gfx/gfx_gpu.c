@@ -4543,7 +4543,7 @@ static void gfx_check_draw(const GfxDraw *d, TargetEntry *e, int has_depth, cons
 			memset(&in, 0, sizeof in); usse_run_secondary(vp, &in, &vd);
 			fprintf(stderr, "  prim %u count %u; interpreter positions:", d->prim, d->count);
 			for (uint32_t i = 0; i < d->count && i < 6; i++) {
-				gfx_fetch_vertex_pa(d, usse_vertex_layout(vp), index_at(d, i), &in);
+				gfx_fetch_vertex_pa(d, usse_vertex_layout(vp), index_at(d, gfx_draw_index_pos(d, i)), gfx_draw_instance(d, i), &in);
 				usse_run_primary(vp, &in, &vd, 0, 0);
 				fprintf(stderr, " (%g %g %g %g)", in.o[0].f, in.o[1].f, in.o[2].f, in.o[3].f);
 			}
@@ -4645,7 +4645,7 @@ static void vf_plan(const GfxDraw *d, const UsseVertexLayout *vl, int npa, VfPla
 	if (d->index_format) for (uint32_t i = 0; i < n; i++) { uint32_t ix; memcpy(&ix, ib + 4 * i, 4); if (ix < lo) lo = ix; if (ix > hi) hi = ix; }
 	else for (uint32_t i = 0; i < n; i++) { uint16_t ix; memcpy(&ix, ib + 2 * i, 2); if (ix < lo) lo = ix; if (ix > hi) hi = ix; }
 	p->lo = lo; p->hi = hi;
-	if (cpu_vfetch() || !p->ntri || g_points_draw) return;
+	if (cpu_vfetch() || !p->ntri || g_points_draw || gfx_draw_instanced(d)) return;   /* (an instance stream is read per instance, which the module's own fetch has no index for) */
 	GfxVertexPacker pk; gfx_vertex_packer_init(&pk, d, vl, npa);
 	if (pk.slow) return;
 	UsseVfLayout *vf = &p->vf; int j = 0;   /* the packer's plan, attribute by attribute, plus the stream each one reads (its j-th slotted attribute) */
@@ -5714,7 +5714,7 @@ void gfx_gpu_draw(const GfxDraw *d) {
 	uint32_t lo = plan.lo, hi = plan.hi, nuniq = hi - lo + 1, nidx = plan.nidx, nrec = 0;
 	int kind = gfx_prim_kind(d->prim), indexed, isize = 4;   /* isize: the index ring's element size for this draw */
 	if (plan.gpu) { indexed = 1; need_words = plan.words; if (!d->index_format && (kind == GFX_PRIM_TRIANGLES || kind == GFX_PRIM_EDGES)) isize = 2; }
-	else { indexed = !g_points_draw && nuniq <= nidx && nidx <= IRING_WORDS && !no_indexed(); nrec = indexed ? nuniq : nidx; need_words = nrec * npa; }
+	else { indexed = !g_points_draw && !gfx_draw_instanced(d) && nuniq <= nidx && nidx <= IRING_WORDS && !no_indexed(); nrec = indexed ? nuniq : nidx; need_words = nrec * npa; }
 	if (need_words > VRING_WORDS) { free(check_pre); soft_fallback(d, "draw larger than the vertex ring"); return; }
 	if (indexed && !iring) {
 		SDL_GPUBufferCreateInfo ici = { .usage = SDL_GPU_BUFFERUSAGE_INDEX, .size = IRING_WORDS * 4 };
@@ -5749,15 +5749,15 @@ void gfx_gpu_draw(const GfxDraw *d) {
 	} else {
 		GfxVertexPacker pk; gfx_vertex_packer_init(&pk, d, vl, (int)npa);
 		if (indexed) {
-			for (uint32_t v = lo; v <= hi; v++, vp_out += npa) gfx_vertex_pack(&pk, v, vp_out);
+			for (uint32_t v = lo; v <= hi; v++, vp_out += npa) gfx_vertex_pack(&pk, v, 0, vp_out);   /* (never instanced: indexed is off for those) */
 			uint32_t *imap = (uint32_t *)SDL_MapGPUTransferBuffer(gpu(), iring_xfer, false) + iring_pos, *ip = imap;
 			for (uint32_t t = 0; t < ntri; t++) { gfx_prim_tri(d->prim, t, pos); for (int k = 0; k < 3; k++) *ip++ = index_at(d, pos[k]) - lo; }
 			SDL_UnmapGPUTransferBuffer(gpu(), iring_xfer);
 			iring_off = iring_pos * 4; iring_pos += iwords;
 		} else if (g_points_draw) {   /* each point's record six times: the vertex shader takes its corner from gl_VertexIndex % 6 */
-			for (uint32_t i = 0; i < d->count; i++) { gfx_vertex_pack(&pk, index_at(d, i), vp_out); for (int k = 1; k < 6; k++) memcpy(vp_out + (size_t)k * npa, vp_out, 4u * npa); vp_out += 6 * npa; }
+			for (uint32_t i = 0; i < d->count; i++) { gfx_vertex_pack(&pk, index_at(d, gfx_draw_index_pos(d, i)), gfx_draw_instance(d, i), vp_out); for (int k = 1; k < 6; k++) memcpy(vp_out + (size_t)k * npa, vp_out, 4u * npa); vp_out += 6 * npa; }
 		} else {
-			for (uint32_t t = 0; t < ntri; t++) { gfx_prim_tri(d->prim, t, pos); for (int k = 0; k < 3; k++, vp_out += npa) gfx_vertex_pack(&pk, index_at(d, pos[k]), vp_out); }
+			for (uint32_t t = 0; t < ntri; t++) { gfx_prim_tri(d->prim, t, pos); for (int k = 0; k < 3; k++, vp_out += npa) gfx_vertex_pack(&pk, index_at(d, gfx_draw_index_pos(d, pos[k])), gfx_draw_instance(d, pos[k]), vp_out); }
 		}
 	}
 	SDL_UnmapGPUTransferBuffer(gpu(), vring_xfer);

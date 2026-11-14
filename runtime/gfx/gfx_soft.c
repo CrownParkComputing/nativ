@@ -215,11 +215,11 @@ static Shader shader_of(const GfxDraw *d) {
 }
 static float uf(uint32_t buf, int i) { float f; memcpy(&f, G(buf + 4 * i), 4); return f; }
 
-static void fetch(const GfxDraw *d, const Shader *s, uint32_t ix, Vert *o) {
+static void fetch(const GfxDraw *d, const Shader *s, uint32_t ix, uint32_t inst_ix, Vert *o) {
 	float pos[4] = {0, 0, 0, 1}, tex[2] = {0, 0}, col[4] = {1, 1, 1, 1};
 	for (int i = 0; i < d->nattr; i++) {
 		const GfxAttr *a = &d->attr[i];
-		uint32_t at = d->stream[a->stream] + ix * d->stride[a->stream] + a->offset;
+		uint32_t at = d->stream[a->stream] + gfx_attr_index(d, a, ix, inst_ix) * d->stride[a->stream] + a->offset;
 		float *dst = a->reg == s->pos_reg ? pos : a->reg == s->tex_reg ? tex : a->reg == s->col_reg ? col : 0;
 		int n = a->reg == s->tex_reg ? 2 : a->reg == s->pos_reg ? 3 : 4;
 		if (dst) for (int k = 0; k < a->comps && k < n; k++) dst[k] = attr_comp(at, a->format, k);
@@ -1525,10 +1525,10 @@ static void usse_profile_report(void) {
  * expects them (§1.11) -- shared with gfx_gpu.c, which packs the very same bytes into its vertex
  * input storage buffer instead of a local UsseInst (see usse_spirv.h's block comment on why the
  * GPU vertex shader can just read that buffer instead of re-deriving this packing in SPIR-V). */
-static void fetch_vertex_pa_into(const GfxDraw *d, const UsseVertexLayout *vl, uint32_t ix, UsseInst *inst) {
+static void fetch_vertex_pa_into(const GfxDraw *d, const UsseVertexLayout *vl, uint32_t ix, uint32_t inst_ix, UsseInst *inst) {
 	for (int i = 0; i < d->nattr; i++) {
 		const GfxAttr *a = &d->attr[i];
-		uint32_t at = d->stream[a->stream] + ix * d->stride[a->stream] + a->offset;
+		uint32_t at = d->stream[a->stream] + gfx_attr_index(d, a, ix, inst_ix) * d->stride[a->stream] + a->offset;
 		const UsseAttrSlot *slot = usse_find_attr(vl, a->reg);
 		if (!slot) continue;
 		float comps[4] = {0, 0, 0, 1};   /* GPU input-assembler convention: components the stream doesn't supply default to (0,0,0,1) */
@@ -1540,15 +1540,15 @@ static void fetch_vertex_pa_into(const GfxDraw *d, const UsseVertexLayout *vl, u
 		} else usse_pack_attr(inst, slot, comps, 0, 0);
 	}
 	if (vl->index_reg >= 0 && vl->index_reg < 160) inst->pa[vl->index_reg].u = ix;
-	if (vl->instance_reg >= 0 && vl->instance_reg < 160) inst->pa[vl->instance_reg].u = 0;
+	if (vl->instance_reg >= 0 && vl->instance_reg < 160) inst->pa[vl->instance_reg].u = inst_ix;
 }
-void gfx_fetch_vertex_pa(const GfxDraw *d, const UsseVertexLayout *vl, uint32_t ix, UsseInst *inst) { memset(inst, 0, sizeof *inst); fetch_vertex_pa_into(d, vl, ix, inst); }
+void gfx_fetch_vertex_pa(const GfxDraw *d, const UsseVertexLayout *vl, uint32_t ix, uint32_t inst_ix, UsseInst *inst) { memset(inst, 0, sizeof *inst); fetch_vertex_pa_into(d, vl, ix, inst_ix, inst); }
 /* the first npa PA words of a vertex, packed exactly as above, straight into `out` (the GPU
  * backend's vertex record): one static scratch instead of a 2 KB UsseInst zeroed per vertex */
-void gfx_fetch_vertex_pa_words(const GfxDraw *d, const UsseVertexLayout *vl, uint32_t ix, uint32_t *out, int npa) {
+void gfx_fetch_vertex_pa_words(const GfxDraw *d, const UsseVertexLayout *vl, uint32_t ix, uint32_t inst_ix, uint32_t *out, int npa) {
 	static UsseInst scratch;
 	memset(scratch.pa, 0, sizeof(scratch.pa[0]) * (size_t)npa);
-	fetch_vertex_pa_into(d, vl, ix, &scratch);
+	fetch_vertex_pa_into(d, vl, ix, inst_ix, &scratch);
 	for (int w = 0; w < npa; w++) out[w] = scratch.pa[w].u;
 }
 void gfx_vertex_packer_init(GfxVertexPacker *pk, const GfxDraw *d, const UsseVertexLayout *vl, int npa) {
@@ -1561,6 +1561,7 @@ void gfx_vertex_packer_init(GfxVertexPacker *pk, const GfxDraw *d, const UsseVer
 		if (!slot) continue;
 		GfxPackAttr *p = &pk->a[pk->n];
 		p->base = d->stream[a->stream] + a->offset; p->stride = d->stride[a->stream]; p->fmt = a->format; p->comps = a->comps > 4 ? 4 : a->comps; p->reg = (uint16_t)slot->reg;
+		p->instanced = a->stream < 16 && d->stream_src[a->stream] >= 2;
 		if (slot->untyped) { int bytes = a->comps * attr_byte_size(a->format); p->kind = 1; p->rawlen = (uint8_t)(bytes > 16 ? 16 : bytes); }
 		else if (slot->type == 6 /*TY_F32*/) { p->kind = 2; p->dcomps = (uint8_t)(slot->comps > 4 ? 4 : slot->comps); }
 		else if (slot->type == 5 /*TY_F16*/) { p->kind = 3; p->dcomps = (uint8_t)(slot->comps > 4 ? 4 : slot->comps); }
@@ -1571,12 +1572,12 @@ void gfx_vertex_packer_init(GfxVertexPacker *pk, const GfxDraw *d, const UsseVer
 		pk->n++;
 	}
 }
-void gfx_vertex_pack(const GfxVertexPacker *pk, uint32_t ix, uint32_t *out) {
-	if (pk->slow) { gfx_fetch_vertex_pa_words(pk->d, pk->vl, ix, out, pk->npa); return; }
+void gfx_vertex_pack(const GfxVertexPacker *pk, uint32_t ix, uint32_t inst_ix, uint32_t *out) {
+	if (pk->slow) { gfx_fetch_vertex_pa_words(pk->d, pk->vl, ix, inst_ix, out, pk->npa); return; }
 	memset(out, 0, 4u * (size_t)pk->npa);
 	for (int i = 0; i < pk->n; i++) {
 		const GfxPackAttr *p = &pk->a[i];
-		uint32_t at = p->base + ix * p->stride;
+		uint32_t at = p->base + (p->instanced ? inst_ix : ix) * p->stride;
 		if (p->kind == 1) { memcpy(out + p->reg, G(at), p->rawlen); continue; }
 		float comps[4] = {0, 0, 0, 1};
 		for (int k = 0; k < p->comps; k++) comps[k] = attr_comp(at, p->fmt, k);
@@ -1584,12 +1585,12 @@ void gfx_vertex_pack(const GfxVertexPacker *pk, uint32_t ix, uint32_t *out) {
 		else for (int c = 0; c < p->dcomps; c++) out[p->reg + c / 2] |= usse_float_to_lane(comps[c], 5 /*TY_F16*/) << (16 * (c & 1));
 	}
 	if (pk->index_reg >= 0) out[pk->index_reg] = ix;
-	if (pk->instance_reg >= 0) out[pk->instance_reg] = 0;
+	if (pk->instance_reg >= 0) out[pk->instance_reg] = inst_ix;
 }
 static const UsseProgram *trace_vprog;   /* RECOMP_TRACE_DRAW: the next vertex of this program is traced (one vertex) */
-static void fetch_interp(const GfxDraw *d, const UsseProgram *vprog, const UsseVertexLayout *vl, UsseDraw *vdraw, uint32_t ix, Vert *o) {
+static void fetch_interp(const GfxDraw *d, const UsseProgram *vprog, const UsseVertexLayout *vl, UsseDraw *vdraw, uint32_t ix, uint32_t inst_ix, Vert *o) {
 	UsseInst inst;
-	gfx_fetch_vertex_pa(d, vl, ix, &inst);
+	gfx_fetch_vertex_pa(d, vl, ix, inst_ix, &inst);
 	uint64_t t0 = usse_profile_on() ? now_ns() : 0;
 	int tr = (vprog == trace_vprog);
 	if (tr) { trace_vprog = 0; fprintf(stderr, "trace vertex %u: pa", ix); for (int i = 0; i < 12; i++) fprintf(stderr, " %08x(%g)", inst.pa[i].u, inst.pa[i].f); fprintf(stderr, "\n"); usse_set_trace(1); }
@@ -1624,7 +1625,7 @@ int gfx_draw_clip_bounds(const GfxDraw *d, int samples, float out[6]) {
 	uint64_t key = mix_words(0x84222325cbf29ce4ull ^ d->vprog, vd.sa, sizeof vd.sa / 4);
 	for (uint32_t k = 0; k < n; k++) {
 		uint32_t i = n == 1 ? 0 : (uint32_t)((uint64_t)k * (d->count - 1) / (n - 1));
-		gfx_fetch_vertex_pa(d, vl, index_at(d, i), &pa[k]);
+		gfx_fetch_vertex_pa(d, vl, index_at(d, gfx_draw_index_pos(d, i)), gfx_draw_instance(d, i), &pa[k]);
 		key = mix_words(key, pa[k].pa, (size_t)npa);
 	}
 	int slot = (int)(key % BOUNDS_CACHE);
@@ -1668,7 +1669,7 @@ int gfx_bounds_prepare(GfxBoundsJob *j, const GfxDraw *d) {
 		if (seen[h] == ix) continue;
 		seen[h] = ix;
 		uint32_t *w = &j->pa[(size_t)j->nv++ * j->npa];
-		gfx_fetch_vertex_pa_words(d, vl, ix, w, j->npa);
+		gfx_fetch_vertex_pa_words(d, vl, ix, gfx_draw_instance(d, i), w, j->npa);
 		key = mix_words(key, w, (size_t)j->npa);
 	}
 	j->key = key;
@@ -2187,7 +2188,7 @@ static void dump(const GfxDraw *d, int k) {
 		uint32_t ix = index_at(d, v);
 		fprintf(stderr, "    v%u (index %u):", v, ix);
 		for (int i = 0; i < d->nattr; i++) {
-			uint32_t a = d->stream[d->attr[i].stream] + ix * d->stride[d->attr[i].stream] + d->attr[i].offset;
+			uint32_t a = d->stream[d->attr[i].stream] + gfx_attr_index(d, &d->attr[i], ix, gfx_draw_instance(d, v)) * d->stride[d->attr[i].stream] + d->attr[i].offset;
 			fprintf(stderr, " [");
 			for (int k2 = 0; k2 < d->attr[i].comps; k2++) fprintf(stderr, "%s%g", k2 ? " " : "", attr_comp(a, d->attr[i].format, k2));
 			fprintf(stderr, "]");
@@ -2198,7 +2199,7 @@ static void dump(const GfxDraw *d, int k) {
 		Shader sh = shader_of(d);
 		float x0 = 1e9, x1 = -1e9, y0 = 1e9, y1 = -1e9;
 		for (uint32_t v = 0; v < d->count; v++) {
-			Vert o; fetch(d, &sh, index_at(d, v), &o);
+			Vert o; fetch(d, &sh, index_at(d, gfx_draw_index_pos(d, v)), gfx_draw_instance(d, v), &o);
 			if (o.x < x0) x0 = o.x; if (o.x > x1) x1 = o.x; if (o.y < y0) y0 = o.y; if (o.y > y1) y1 = o.y;
 		}
 		fprintf(stderr, "    clip-space extent x %.2f..%.2f y %.2f..%.2f\n", x0, x1, y0, y1);
@@ -2272,7 +2273,7 @@ static void render_points_interp(const GfxDraw *d, const UsseProgram *vp, DrawRe
 	if (!(ky > 0)) ky = 1;
 	int flip_v = d->polygon_mode == 2;   /* POINT_10UV */
 	for (uint32_t i = 0; i < d->count; i++) {
-		Vert a; fetch_interp(d, vp, vl, &r->vdraw, index_at(d, i), &a);
+		Vert a; fetch_interp(d, vp, vl, &r->vdraw, index_at(d, gfx_draw_index_pos(d, i)), gfx_draw_instance(d, i), &a);
 		float size = (vl->o_psize >= 0 && vl->o_psize < PC_U) ? a.vary[vl->o_psize] : (float)(d->point_line_width ? d->point_line_width : 1);
 		if (!(size > 0)) continue;   /* (a NaN size too) */
 		if (size > 2048) size = 2048;
@@ -2320,8 +2321,8 @@ static int render_interp(const GfxDraw *d) {
 	Vert a, b, cc;
 	for (uint32_t t = 0; t < ntri; t++) {
 		gfx_prim_tri(d->prim, t, pos);
-		fetch_interp(d, vp, r->vlayout, &r->vdraw, index_at(d, pos[0]), &a); fetch_interp(d, vp, r->vlayout, &r->vdraw, index_at(d, pos[1]), &b);
-		fetch_interp(d, vp, r->vlayout, &r->vdraw, index_at(d, pos[2]), &cc);
+		fetch_interp(d, vp, r->vlayout, &r->vdraw, index_at(d, gfx_draw_index_pos(d, pos[0])), gfx_draw_instance(d, pos[0]), &a); fetch_interp(d, vp, r->vlayout, &r->vdraw, index_at(d, gfx_draw_index_pos(d, pos[1])), gfx_draw_instance(d, pos[1]), &b);
+		fetch_interp(d, vp, r->vlayout, &r->vdraw, index_at(d, gfx_draw_index_pos(d, pos[2])), gfx_draw_instance(d, pos[2]), &cc);
 		record_tri(&a, &b, &cc);
 	}
 	return 1;
@@ -2343,7 +2344,7 @@ static void render(const GfxDraw *d) {
 	Vert a, b, cc;
 	for (uint32_t t = 0; t < ntri; t++) {
 		gfx_prim_tri(d->prim, t, pos);
-		fetch(d, &s, index_at(d, pos[0]), &a); fetch(d, &s, index_at(d, pos[1]), &b); fetch(d, &s, index_at(d, pos[2]), &cc);
+		fetch(d, &s, index_at(d, gfx_draw_index_pos(d, pos[0])), gfx_draw_instance(d, pos[0]), &a); fetch(d, &s, index_at(d, gfx_draw_index_pos(d, pos[1])), gfx_draw_instance(d, pos[1]), &b); fetch(d, &s, index_at(d, gfx_draw_index_pos(d, pos[2])), gfx_draw_instance(d, pos[2]), &cc);
 		record_tri(&a, &b, &cc);
 	}
 }
