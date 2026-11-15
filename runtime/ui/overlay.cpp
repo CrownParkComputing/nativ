@@ -652,7 +652,8 @@ static void build_ui(void) {
 	ImGui::PushStyleColor(ImGuiCol_ChildBg, ui::bg);
 	ImGui::BeginChild("page", ImVec2(0, -foot), ImGuiChildFlags_Borders | ImGuiChildFlags_AlwaysUseWindowPadding);
 	ImGui::PopStyleColor();
-	ui::heading(g_tab_names[g_section], em * 1.25f);
+	/* no title here: the sidebar already says which section this is, and on a handheld the line it
+	 * cost was a settings row. Its one-line blurb stays as the page's own opening. */
 	ImGui::TextDisabled("%s", g_tab_blurbs[g_section]);
 	if (focus_page) {
 		ImGui::SetKeyboardFocusHere();      /* (the page's first control) */
