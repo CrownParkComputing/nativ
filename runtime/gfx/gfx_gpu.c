@@ -391,7 +391,19 @@ void *gfx_gpu_create_device(void) {
 #ifdef RECOMP_MTL_ARCHIVE
 	if (d && (SDL_GetGPUShaderFormats(d) & SDL_GPU_SHADERFORMAT_METALLIB) && msl_cache_dir() && !msl_salt()) mtl_archive_on = mtl_archive_open(msl_cache_dir(), msl_lib_store);
 #endif
-	if (d) fprintf(stderr, "    gpu: %s device %s%s\n", SDL_GetGPUDeviceDriver(d), SDL_GetStringProperty(SDL_GetGPUDeviceProperties(d), SDL_PROP_GPU_DEVICE_NAME_STRING, "?"), vk_fragment_stores ? " (robustBufferAccess, fragmentStoresAndAtomics on)" : "");
+	/* the driver's own name and version as well as the GPU's: a replacement driver (vkdriver.c -- a
+	 * Mesa Turnip picked in the menu) is only visibly in use here, and adrenotools falls back to the
+	 * system one quietly when it cannot load the chosen one. "Adreno (TM) 650 / turnip Mesa 27" is a
+	 * different answer from "Adreno (TM) 650 / Qualcomm". */
+	if (d) {
+		SDL_PropertiesID dp = SDL_GetGPUDeviceProperties(d);
+		const char *dn = SDL_GetStringProperty(dp, SDL_PROP_GPU_DEVICE_DRIVER_NAME_STRING, "");
+		const char *dv = SDL_GetStringProperty(dp, SDL_PROP_GPU_DEVICE_DRIVER_VERSION_STRING, "");
+		fprintf(stderr, "    gpu: %s device %s%s%s%s%s%s\n", SDL_GetGPUDeviceDriver(d),
+		        SDL_GetStringProperty(dp, SDL_PROP_GPU_DEVICE_NAME_STRING, "?"),
+		        *dn ? " / " : "", dn, *dv ? " " : "", dv,
+		        vk_fragment_stores ? " (robustBufferAccess, fragmentStoresAndAtomics on)" : "");
+	}
 	return d;
 }
 /* D24_UNORM_S8_UINT isn't supported on Metal/Apple Silicon (no 24-bit depth format at all there);

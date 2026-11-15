@@ -6,10 +6,17 @@
  * game's files and pick it in the menu, without a new package and without this project shipping
  * anyone else's driver.
  *
- * Drivers live in `drivers/` under the game's own files directory (dev/android-install.sh pushes
- * one there, and nothing stops a player adding more) -- NOT inside the package, so a new Turnip
- * release is one adb push away. Android refuses to dlopen code from there in the ordinary way;
- * libadrenotools loads it through a memfd instead, which is what platform/android/vkshim.c is for.
+ * Drivers live in `drivers/` under the game's own EXTERNAL files directory (dev/android-install.sh
+ * pushes one there, and nothing stops a player adding more) -- not inside the package, so a new
+ * Turnip release is one adb push away.
+ *
+ * They cannot be LOADED from there: /storage/emulated/0 is mounted noexec, and adrenotools' hook
+ * dlopens the driver by path, so the mapping is refused --
+ *     couldn't map ".../files/drivers/libvulkan_freedreno.so" segment 2: Operation not permitted
+ * and it quietly falls back to the system driver (the game runs, on Qualcomm's driver, saying
+ * nothing). So the chosen driver is copied into the app's own internal storage, which may map
+ * executable pages, and adrenotools is pointed there. The player's folder stays the one they can
+ * reach over adb; the copy is an implementation detail refreshed whenever the two differ.
  *
  * The choice cannot be applied while the game runs: SDL opens the Vulkan library once, before there
  * is a device, and changing it afterwards would mean rebuilding every pipeline, texture and buffer.
@@ -22,6 +29,7 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <sys/stat.h>
 
 #include <SDL3/SDL.h>
 
@@ -74,6 +82,25 @@ int vkdriver_list(char (*names)[VKDRIVER_NAME_MAX], int max) {
 	return n;
 }
 
+#ifdef __ANDROID__
+/* the same file already there? (size alone: a driver is replaced wholesale, never edited) */
+static int same_file(const char *a, const char *b) {
+	struct stat sa, sb;
+	return !stat(a, &sa) && !stat(b, &sb) && sa.st_size == sb.st_size && sb.st_mtime >= sa.st_mtime;
+}
+static int copy_file(const char *src, const char *dst) {
+	FILE *i = fopen(src, "rb"); if (!i) return 0;
+	FILE *o = fopen(dst, "wb"); if (!o) { fclose(i); return 0; }
+	char b[65536]; size_t n; int ok = 1;
+	while ((n = fread(b, 1, sizeof b, i)) > 0) if (fwrite(b, 1, n, o) != n) { ok = 0; break; }
+	if (ferror(i)) ok = 0;
+	fclose(i);
+	if (fclose(o) != 0) ok = 0;
+	if (!ok) remove(dst);
+	return ok;
+}
+#endif
+
 void vkdriver_apply(void) {
 	/* The setting is the player's choice and wins, "system" included -- that is the point of the
 	 * menu. With no setting at all, whatever the launcher or launch.ini put in the environment
@@ -103,9 +130,27 @@ void vkdriver_apply(void) {
 		return;
 	}
 	fclose(f);
+	const char *from = dir;
+#ifdef __ANDROID__
+	/* the executable copy, in internal storage (see the head of this file) */
+	const char *in = SDL_GetAndroidInternalStoragePath();
+	char priv[1024], dest[1280];
+	if (in) {
+		snprintf(priv, sizeof priv, "%s/drivers", in);
+		SDL_CreateDirectory(priv);
+		snprintf(dest, sizeof dest, "%s/%s", priv, want);
+		if (!same_file(path, dest) && !copy_file(path, dest)) {
+			fprintf(stderr, "    vulkan driver: %s could not be copied to %s -- using the system driver\n", want, priv);
+			unsetenv("SDL_VULKAN_LIBRARY"); unsetenv("RECOMP_VULKAN_DRIVER"); unsetenv("RECOMP_VULKAN_DRIVER_DIR");
+			snprintf(current, sizeof current, "system");
+			return;
+		}
+		from = priv;
+	}
+#endif
 	setenv("RECOMP_VULKAN_DRIVER", want, 1);
-	if (dir && *dir) setenv("RECOMP_VULKAN_DRIVER_DIR", dir, 1);
+	if (from && *from) setenv("RECOMP_VULKAN_DRIVER_DIR", from, 1);
 	setenv("SDL_VULKAN_LIBRARY", "libvkshim.so", 1);   /* the shim opens the driver; SDL cannot (vkshim.c) */
 	snprintf(current, sizeof current, "%s", want);
-	fprintf(stderr, "    vulkan driver: %s, from %s\n", want, dir);
+	fprintf(stderr, "    vulkan driver: %s, from %s\n", want, from);
 }

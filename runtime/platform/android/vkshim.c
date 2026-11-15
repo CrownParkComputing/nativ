@@ -70,7 +70,14 @@ static void load_driver(void) {
 	if (!h) { LOG("vkshim: adrenotools could not open %s from %s (%s)", name, drvdir, dlerror() ? dlerror() : "no reason given"); return; }
 	real_gipa = (PFN_GetInstanceProcAddr)dlsym(h, "vkGetInstanceProcAddr");
 	if (!real_gipa) { LOG("vkshim: %s has no vkGetInstanceProcAddr", name); return; }
-	LOG("vkshim: %s loaded from %s", name, drvdir);
+	/* This handle is Android's own loader, always: adrenotools opens /system/lib64/libvulkan.so in a
+	 * namespace where its hook intercepts the loader's dlopen of the vendor driver and substitutes
+	 * the custom one. So getting a handle says nothing about which driver won -- the hook does that
+	 * swap later, logs it under the "hook_impl" tag, and FALLS BACK TO THE SYSTEM DRIVER quietly if
+	 * the custom one will not map. What the game actually got is in the gpu banner at startup, which
+	 * names the driver as well as the GPU ("Adreno (TM) 650 / turnip Mesa ..." against
+	 * "... / Qualcomm Technologies Inc. Adreno Vulkan Driver"). */
+	LOG("vkshim: handing %s to Android's loader, driver from %s", name, drvdir);
 }
 
 /* the one symbol SDL asks this library for; every other entry point is reached through it */
