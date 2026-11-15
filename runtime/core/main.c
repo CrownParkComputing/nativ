@@ -376,7 +376,15 @@ void recomp_call_external(Cpu *c, uint32_t addr) {
 				static const char *tr; static int tr_init; if (!tr_init) { tr = getenv("RECOMP_TRACE_MODULE"); tr_init = 1; }
 				if (tr) for (const char *p = tr; *p; ) {
 					const size_t l = strcspn(p, ",");
-					if (l && !strncmp(name, p, l)) { fprintf(stderr, "    module %s(%#x, %#x, %#x, %#x) -> %#x\n", name, a0, a1, a2, a3, c->r[0]); break; }
+					if (l && !strncmp(name, p, l)) {
+						fprintf(stderr, "    module %s(%#x, %#x, %#x, %#x) -> %#x", name, a0, a1, a2, a3, c->r[0]);
+						/* RECOMP_TRACE_MODULE_WORDS=n: and the n words at the first argument, for a call whose
+						 * real argument is a structure (sceGxmInitialize's parameters, say) */
+						static long nw = -2; if (nw == -2) { const char *e = getenv("RECOMP_TRACE_MODULE_WORDS"); nw = e ? atol(e) : 0; }
+						if (nw > 0 && a0 >= 0x1000 && a0 < 0xfff00000u) { fprintf(stderr, "  [%#x]:", a0);
+							for (long k = 0; k < nw && k < 16; k++) fprintf(stderr, " %08x", RD32(a0 + 4 * (uint32_t)k)); }
+						fprintf(stderr, "\n"); break;
+					}
 					p += l; if (*p) p++;
 				}
 			}
