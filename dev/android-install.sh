@@ -16,7 +16,11 @@ set -euo pipefail
 TITLE=${1:?usage: android-install.sh <title> [adb serial]}
 R=$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)
 SDK=${ANDROID_HOME:-$HOME/Android/Sdk}
-PKG=com.crownparkcomputing.nativ
+# One package per game. A single package id for every title meant installing one REPLACED the last --
+# Super Stardust Delta went on top of TxK, taking its saves and settings with it. The Java classes stay
+# in com.crownparkcomputing.nativ (the manifest names the activity in full); only the application id
+# and the launcher label are per game.
+PKG=com.crownparkcomputing.nativ.$(echo "$TITLE" | tr '[:upper:]' '[:lower:]')
 ADB=(adb); [[ ${2:-} ]] && ADB=(adb -s "$2")
 PY=$R/.venv/bin/python; [[ -x $PY ]] || PY=python3
 
@@ -79,7 +83,12 @@ if [[ -n ${TURNIP_DRIVER:-} ]]; then
 fi
 
 echo "== packaging"
-"$BT/aapt2" link -I "$PLAT/android.jar" --manifest "$R/android/AndroidManifest.xml" \
+# the manifest, per game: its own application id and its own name under the launcher
+XNAME=$(printf '%s' "$GAMENAME" | sed -e 's/&/\&amp;/g' -e 's/</\&lt;/g' -e 's/"/\&quot;/g')
+sed -e "s|package=\"com.crownparkcomputing.nativ\"|package=\"$PKG\"|" \
+    -e "s|android:label=\"Nativ\"|android:label=\"$XNAME\"|g" \
+    "$R/android/AndroidManifest.xml" > "$B/AndroidManifest.xml"
+"$BT/aapt2" link -I "$PLAT/android.jar" --manifest "$B/AndroidManifest.xml" \
     --min-sdk-version 28 --target-sdk-version 35 -o "$B/base.apk" >/dev/null
 (cd "$B" && zip -q -r base.apk classes.dex lib)
 "$BT/zipalign" -f 4 "$B/base.apk" "$B/aligned.apk"
