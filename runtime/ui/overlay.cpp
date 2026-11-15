@@ -110,6 +110,7 @@ void settings_save(void);
 
 static ImGuiContext *g_ctx;
 static bool g_has_window;      /* overlay_init was given a real SDL_Window: the platform backend is live */
+static SDL_Window *g_window;   /* the same window (unused for sizing: the menu is a fixed point size) */
 /* written by the window thread, read by the game thread (display.c's pause, window.c's audio): atomic,
  * like every other flag that crosses those threads (rscale_req, osd_level_v). g_paused: Game > Pause
  * in the menu bar -- the game held (display.c, as for the menu) with nothing but a banner on screen */
@@ -134,6 +135,7 @@ int overlay_init(SDL_GPUDevice *device, SDL_Window *window, SDL_GPUTextureFormat
 	/* (keyboard/gamepad navigation: set per frame in render_frame -- on with the full menu only) */
 	ui::load_system_font(io);   /* an explicit face: without one, ImGui 1.92's own automatic choice (vector vs. bitmap)
 		depends on a DPI scale the headless path never sets, and picks a degenerate (zero-size) one */
+	g_window = window;
 	ui::apply(15.0f, 1.0f);     /* the launcher's look (ui_theme.h), a point smaller: the menu sits over a 960x544 game */
 	g_has_window = window != nullptr;
 	if (g_has_window && !ImGui_ImplSDL3_InitForSDLGPU(window)) { ImGui::DestroyContext(g_ctx); g_ctx = nullptr; return 0; }
@@ -568,7 +570,10 @@ static void build_ui(void) {
 	if (g_select_tab >= 0) { g_section = g_select_tab; g_select_tab = -1; }
 	ImGui::GetBackgroundDrawList()->AddRectFilled(ImVec2(0, 0), io.DisplaySize, ui::u32(ui::bg, 0.62f));   /* the paused game, dimmed behind */
 	const float W = io.DisplaySize.x - 2 * em < 58 * em ? io.DisplaySize.x - 2 * em : 58 * em;
-	const float H = io.DisplaySize.y - 2 * em < 38 * em ? io.DisplaySize.y - 2 * em : 38 * em;
+	/* as tall as the screen allows, rather than 38 em of it: the text is a fixed point size, so on a
+	 * handheld's panel a capped window left two thirds of the screen empty and showed four rows. The
+	 * width still caps -- a line of help text is only readable so wide. */
+	const float H = io.DisplaySize.y - 2 * em;
 	ImGui::SetNextWindowPos(ImVec2(io.DisplaySize.x * 0.5f, io.DisplaySize.y * 0.5f), ImGuiCond_Always, ImVec2(0.5f, 0.5f));
 	ImGui::SetNextWindowSize(ImVec2(W, H), ImGuiCond_Always);
 	ImGui::PushStyleColor(ImGuiCol_WindowBg, ui::surface);
