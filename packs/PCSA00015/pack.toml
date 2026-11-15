@@ -1,0 +1,36 @@
+# WipEout 2048 (PCSA00015, US Vita release) -- Studio Liverpool's launch-window anti-gravity racer,
+# the last WipEout the studio made. Only facts about the game; nothing of its code or data (the
+# format: pipeline/packconf.py).
+NAME = "WipEout 2048"
+# REGION: the release this pack plays (its content id UP9000-PCSA00015_00-WIPEOUT2048BASE0, North
+# America); another region's release is another build, not played yet
+REGION = "US"
+BASE = "game"
+# recompiled C split into this many part files. Its executable segment is 0x518280 (5.1 MB) -- about
+# one and three quarter times Super Stardust's, a fifth of DARIUSBURST's.
+SPLIT = 32
+# sce_module/libc.suprx (C runtime, libm, the C++ library) plus the firmware's libgxm and its GPU
+# services library (GXM runs as Sony's code; gxm_sony.c observes its rendering boundary). libfios2
+# because libc.suprx itself imports SceFios2, not because the eboot does. The copy also ships
+# libult.suprx, but nothing here imports SceUlt, so it is left out until something asks for it.
+MODULES = "libc libgxm_es4 libgpu_es4 libfios2"
+
+# WHERE THIS STANDS (2026-11-15). Just imported: not yet recompiled, not yet run. The eboot is
+# 5,509,120 bytes and imports 47 libraries / 598 functions, 553 of them named. Beyond the usual
+# graphics and kernel set it asks for SceNgs (audio), SceFiber (kernel.c runs each fiber as a host
+# thread), SceAvPlayer/SceMp4/SceVideodecUser/SceAudiodecUser (its video), SceCamera, SceMotion,
+# SceNear, ScePhotoExport and SceScreenShot, and a full online set (SceNp*, SceHttp, SceNet, SceSsl)
+# -- so RECOMP_GAME_OPTIONS=online is likely to matter here as it does for Super Stardust.
+#
+# About this copy. The dump is MaiDumpTool's, not NoNpDrm's: there is no sce_sys/package/work.bin and
+# no .rif anywhere, and its eboot is fake-signed. It decrypts with no klicensee at all ("klicensee:
+# none", 8 SELFs, 0 failed) -- which is why `vitarecomp add` no longer refuses an update when its
+# game left no licence behind, since neither of them ever wanted one (pipeline/vitarecomp.py).
+#
+# The game is played as its 1.04 update layered over the release (app0_patched, 530 files).
+
+# The build of the game this pack plays: the SHA-256 of its eboot.bin.elf (vitarecomp import tells a
+# copy's version by it). Decrypted 2026-11-15 from a MaiDump dump (game + its 1.04 update).
+[versions."1.04"]
+sha256 = "fc2e2a003a7f28c83d0237ca521192149da6bb9a2bcb4ab3f87553addad5fa26"
+status = "recommended"    # the game with its 1.04 update layered over it (app0_patched)

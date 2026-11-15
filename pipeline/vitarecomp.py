@@ -260,7 +260,13 @@ def cmd_add(T, rest):
         kept = k.stdout.strip() if k.returncode == 0 else ""
         if kept: args += ["--license", kept]; say(f"{tid}: its licence, kept ({cid})")
         elif kind == "update" and os.path.isfile(os.path.join(W, "license.rif")): args += ["--license", os.path.join(W, "license.rif")]
-        elif kind == "update": die(f"{tid}: add the game itself first -- its update decrypts with the game's licence")
+        # An update normally decrypts with its game's licence. A fake-signed copy (MaiDumpTool's, say)
+        # carries none and needs none: its game decrypted with "klicensee: none" and so left no
+        # license.rif behind, and refusing the update for a licence neither of them wants would stop a
+        # dump that decrypts perfectly well (WipEout 2048's). So stop only on the real mistake -- the
+        # update offered before the game -- and otherwise let the decrypt itself say whether a licence
+        # was needed, which it does plainly.
+        elif kind == "update" and not os.path.isdir(os.path.join(W, "app0")): die(f"{tid}: add the game itself first -- its update decrypts with the game's licence")
         else: say(f"{tid}: no licence kept for it ({cid}): a copy that needs one stops below -- give its licence file (.rif or work.bin, --license), or keep yours first (vitarecomp licenses)")
     tmp = os.path.join(DUMP, "decrypted", f".add.{os.getpid()}"); rif = tmp + ".rif"
     rmtree(tmp); rmtree(rif); os.makedirs(os.path.join(DUMP, "decrypted"), exist_ok=True)
