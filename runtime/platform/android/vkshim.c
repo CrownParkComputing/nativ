@@ -51,13 +51,26 @@ static void load_driver(void) {
 	const char *name = getenv("RECOMP_VULKAN_DRIVER");
 	if (!name || !*name) name = "libvulkan_freedreno.so";
 
+	/* RECOMP_VULKAN_DRIVER_DIR: where the driver itself is, when it is not shipped in the package --
+	 * gfx/vkdriver.c points this at the drivers/ folder beside the game's files, so a player can add
+	 * a newer Turnip without a new package. The HOOK directory stays this library's own, which is
+	 * what adrenotools documents and what the package always has. Loading from outside the package
+	 * is why adrenotools is needed at all: it maps the driver through a memfd rather than dlopening
+	 * a path Android would refuse. */
+	const char *drvdir = getenv("RECOMP_VULKAN_DRIVER_DIR");
+	char drvbuf[PATH_MAX];
+	if (drvdir && *drvdir) {
+		snprintf(drvbuf, sizeof drvbuf, "%s%s", drvdir, drvdir[strlen(drvdir) - 1] == '/' ? "" : "/");
+		drvdir = drvbuf;
+	} else drvdir = dir;
+
 	/* tmpLibDir is only used below API 29 (memfd is used instead), and no file redirection or memory
 	 * import is wanted here: the driver is shipped in the package, not supplied by the player. */
-	void *h = adrenotools_open_libvulkan(RTLD_NOW, ADRENOTOOLS_DRIVER_CUSTOM, NULL, dir, dir, name, NULL, NULL);
-	if (!h) { LOG("vkshim: adrenotools could not open %s from %s (%s)", name, dir, dlerror() ? dlerror() : "no reason given"); return; }
+	void *h = adrenotools_open_libvulkan(RTLD_NOW, ADRENOTOOLS_DRIVER_CUSTOM, NULL, dir, drvdir, name, NULL, NULL);
+	if (!h) { LOG("vkshim: adrenotools could not open %s from %s (%s)", name, drvdir, dlerror() ? dlerror() : "no reason given"); return; }
 	real_gipa = (PFN_GetInstanceProcAddr)dlsym(h, "vkGetInstanceProcAddr");
 	if (!real_gipa) { LOG("vkshim: %s has no vkGetInstanceProcAddr", name); return; }
-	LOG("vkshim: %s loaded from %s", name, dir);
+	LOG("vkshim: %s loaded from %s", name, drvdir);
 }
 
 /* the one symbol SDL asks this library for; every other entry point is reached through it */

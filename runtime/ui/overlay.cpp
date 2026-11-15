@@ -91,6 +91,12 @@ float window_aspect_widen(void);
 int metrics_osd_level(void); void metrics_osd_set(int level); void metrics_osd_cycle(void);
 double metrics_fps(void);
 int metrics_osd_lines(char (*out)[40], int max);   /* the F1 overlay's text, drawn here as the HUD (overlay_marks) */
+/* gfx/vkdriver.c: the Vulkan driver this run got, and the replacements a player can pick from */
+#define VKDRIVER_NAME_MAX 64
+#define VKDRIVER_MAX 6
+const char *vkdriver_dir(void);
+int vkdriver_list(char (*names)[VKDRIVER_NAME_MAX], int max);
+const char *vkdriver_current(void);
 /* settings.c */
 int settings_has(const char *key);
 int settings_int(const char *key, int def);
@@ -317,6 +323,39 @@ static void page_display(void) {
 	}
 	ui::row("Fullscreen");
 	{ bool fs = window_get_fullscreen() != 0; if (ui::toggle("fs", &fs)) window_set_fullscreen(fs ? 1 : 0); }
+	{	/* The Vulkan driver (gfx/vkdriver.c). A handheld's own driver is often years behind -- a
+		 * Retroid Pocket Flip2's Adreno reports Vulkan 1.1 where Mesa's Turnip reports 1.3 -- and a
+		 * player can drop a newer Turnip in the drivers/ folder beside the game's files and pick it
+		 * here. SDL opens the Vulkan library once, before there is a device, so a change takes a
+		 * restart; the row says so rather than pretending otherwise. */
+		char found[VKDRIVER_MAX][VKDRIVER_NAME_MAX];
+		const int nd = vkdriver_list(found, VKDRIVER_MAX);
+		char chosen[VKDRIVER_NAME_MAX]; settings_str("vulkan_driver", "", chosen, sizeof chosen);
+		const bool pending = chosen[0] && strcmp(chosen, vkdriver_current()) != 0;
+		char help[640];
+		if (!nd && *vkdriver_dir())
+			snprintf(help, sizeof help, "Running on %s. No drivers in %s -- put a Mesa Turnip build there to choose it here.", vkdriver_current(), vkdriver_dir());
+		else if (!nd)
+			snprintf(help, sizeof help, "Running on %s. This device takes no replacement driver.", vkdriver_current());
+		else
+			snprintf(help, sizeof help, "Running on %s. %s", vkdriver_current(),
+			         pending ? "Restart the game to use the one you picked." : "A different driver takes effect next time the game starts.");
+		ui::row("Vulkan driver", help);
+		const char *labels[1 + VKDRIVER_MAX];
+		static char buf[1 + VKDRIVER_MAX][VKDRIVER_NAME_MAX + 8];
+		snprintf(buf[0], sizeof buf[0], "System##vkd"); labels[0] = buf[0];
+		for (int i = 0; i < nd; i++) {   /* "libvulkan_freedreno.so" reads as "freedreno" in a row of buttons */
+			const char *n = found[i], *base = strncmp(n, "libvulkan_", 10) ? n : n + 10;
+			const char *dot = strrchr(base, '.');
+			snprintf(buf[1 + i], sizeof buf[0], "%.*s##vkd%d", (int)(dot ? dot - base : (long)strlen(base)), base, i);
+			labels[1 + i] = buf[1 + i];
+		}
+		int v = 0;
+		for (int i = 0; i < nd; i++) if (!strcmp(chosen, found[i])) v = 1 + i;
+		ImGui::BeginDisabled(nd == 0);
+		if (ui::segmented(labels, 1 + nd, &v)) { settings_set_str("vulkan_driver", v == 0 ? "system" : found[v - 1]); settings_save(); }
+		ImGui::EndDisabled();
+	}
 	if (gfx_gpu_fsr_supported()) {   /* (this game's FSR is verified: the anti-aliasing is a choice) */
 		ui::row("Anti-aliasing", "Smooths jagged edges. FXAA: a light pass on the finished frame. FSR 3.1 (experimental): AMD's temporal anti-aliasing on the 3D world, steadier and cleaner, at a GPU cost; some surfaces may still shimmer (F4 compares it live).");
 		static const char *const names[3] = {"Off##aam", "FXAA##aam", "FSR 3.1 (experimental)##aam"};

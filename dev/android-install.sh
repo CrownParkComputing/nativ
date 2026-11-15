@@ -54,10 +54,16 @@ cp "$AT/SDL3/lib/libSDL3.so" "$B/lib/arm64-v8a/"
 cp "$OUT/libmain.so" "$B/lib/arm64-v8a/"
 cp "$NDK/toolchains/llvm/prebuilt/linux-x86_64/sysroot/usr/lib/aarch64-linux-android/libc++_shared.so" "$B/lib/arm64-v8a/"
 
-# TURNIP_DRIVER=<libvulkan_freedreno.so | a Mesa Turnip .zip>: ship that driver in the package and
-# point SDL at it instead of the system Vulkan (SDL_VULKAN_LIBRARY, read from the environment that
-# launch.ini sets). The stock Adreno driver on a Retroid Pocket Flip2 reports Vulkan 1.1; Turnip
-# reports 1.3. The driver is a third-party binary supplied by you and is not part of this project.
+# TURNIP_DRIVER=<libvulkan_freedreno.so | a Mesa Turnip .zip>: install that driver for the game to
+# use instead of the system Vulkan. The stock Adreno driver on a Retroid Pocket Flip2 reports Vulkan
+# 1.1; Turnip reports 1.3. The driver is a third-party binary supplied by you and is not part of this
+# project.
+#
+# It is pushed to drivers/ BESIDE the game's files, not built into the package: the player picks it
+# in the menu (F10 -> Display -> Vulkan driver, gfx/vkdriver.c), and a newer Turnip is one `adb push`
+# into that folder away rather than a reinstall. The shim and its hooks, which must sit in the app's
+# nativeLibraryDir, do go in the package -- always, so the menu has something to select with even
+# when no driver was given here.
 #
 # NOT ENOUGH ON ITS OWN, and measured as such: SDL dlopens that path in the app's own linker
 # namespace, which may load only the platform's public libraries, and Turnip needs libhardware.so,
@@ -66,7 +72,7 @@ cp "$NDK/toolchains/llvm/prebuilt/linux-x86_64/sysroot/usr/lib/aarch64-linux-and
 # SDL_GPU reports "No supported SDL_GPU backend found". Loading it takes libadrenotools'
 # linkernsbypass, in a namespace that can see /system/lib64 and /vendor/lib64; since SDL takes a path
 # and dlopens it itself, the way to keep SDL stock is a small shim library in the package that does
-# that load and re-exports vkGetInstanceProcAddr. Until that shim exists, leave TURNIP_DRIVER unset.
+# that load and re-exports vkGetInstanceProcAddr.
 TURNIP_SO=
 if [[ -n ${TURNIP_DRIVER:-} ]]; then
   if [[ $TURNIP_DRIVER == *.zip ]]; then
@@ -74,12 +80,14 @@ if [[ -n ${TURNIP_DRIVER:-} ]]; then
     TURNIP_SO=$(find "$TD" -name 'libvulkan_*.so' | head -1)
   else TURNIP_SO=$TURNIP_DRIVER; fi
   [[ -f ${TURNIP_SO:-} ]] || { echo "no driver .so in $TURNIP_DRIVER" >&2; exit 1; }
-  cp "$TURNIP_SO" "$B/lib/arm64-v8a/$(basename "$TURNIP_SO")"
-  # ...and the shim that actually opens it, with adrenotools' hooks beside it: they must sit in the
-  # app's nativeLibraryDir, which is this directory once the package is installed
-  bash "$R/runtime/platform/android/build-turnip.sh" >/dev/null
+fi
+# the shim that opens a driver, with adrenotools' hooks beside it: they must sit in the app's
+# nativeLibraryDir, which is this directory once the package is installed. Always shipped, so the
+# menu can select a driver pushed later.
+if bash "$R/runtime/platform/android/build-turnip.sh" >/dev/null 2>&1; then
   cp "$R"/toolchain-android/turnip/lib/*.so "$B/lib/arm64-v8a/"
-  echo "   driver: $(basename "$TURNIP_SO") ($(du -h "$TURNIP_SO" | cut -f1)), through libvkshim.so"
+else
+  echo "   note: the Vulkan driver shim did not build -- the menu will offer the system driver only" >&2
 fi
 
 echo "== packaging"
@@ -153,10 +161,15 @@ MODPATHS=$(for f in $MODS; do printf '%s,' "$GDIR/$f"; done); MODPATHS=${MODPATH
   echo "RECOMP_TITLE=$TITLEID"
   echo "RECOMP_GAME_NAME=$GAMENAME"
   echo "RECOMP_HITCH_LOG=50"
-  if [[ -n ${TURNIP_SO:-} ]]; then echo "SDL_VULKAN_LIBRARY=libvkshim.so"; echo "RECOMP_VULKAN_DRIVER=$(basename "$TURNIP_SO")"; fi
   for kv in $RUNENV; do echo "$kv"; done
 } > "$B/launch.ini"
 "${ADB[@]}" push -q "$B/launch.ini" "$FILES/launch.ini" >/dev/null
+# the drivers the menu offers: beside the game's files, so another can be added without a reinstall
+if [[ -n ${TURNIP_SO:-} ]]; then
+  "${ADB[@]}" shell mkdir -p "$FILES/drivers" >/dev/null
+  "${ADB[@]}" push -q "$TURNIP_SO" "$FILES/drivers/$(basename "$TURNIP_SO")" >/dev/null
+  echo "   driver: $(basename "$TURNIP_SO") ($(du -h "$TURNIP_SO" | cut -f1)) -> $FILES/drivers; pick it in the menu (Display > Vulkan driver)"
+fi
 echo "== ready: $GAMENAME on $PKG"
 echo "   start it:  adb shell monkey -p $PKG 1"
 echo "   watch it:  adb logcat -s nativ"

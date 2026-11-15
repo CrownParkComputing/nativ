@@ -23,6 +23,7 @@
 #include "hle.h"
 #include "gfx_coverage.h"
 #include "settings.h"
+#include "vkdriver.h"
 #include <SDL3/SDL_filesystem.h>
 void window_run(void *(*fn)(void *), void *arg);
 
@@ -705,6 +706,7 @@ int main(int argc, char **argv) {
 		SDL_free(pref);
 		if (path[0]) settings_load_shared(path);
 	}
+	vkdriver_apply();   /* the Vulkan driver the menu chose (gfx/vkdriver.c): SDL opens one library, once, below */
 	if (argc > 3) budget = strtoull(argv[3], 0, 0);
 	if (getenv("RECOMP_LOG")) nlog = strtoull(getenv("RECOMP_LOG"), 0, 0);
 	if (getenv("RECOMP_LOG_FROM")) log_from = strtoull(getenv("RECOMP_LOG_FROM"), 0, 0);   /* and every call from #n on */

@@ -15,6 +15,11 @@
  * Keys (consumer, values):
  *   render_scale  gfx_gpu.c   1..6                      internal resolution (5760x3264 at 6)
  *   aspect        window.c    fit | stretch | fill      how the 960x544 picture meets the window
+ *   vulkan_driver vkdriver.c  system | <a driver's file name>   the Vulkan driver to run on: the platform's own, or one
+ *                             of the .so files in drivers/ beside the game's files (Android: a Mesa Turnip build the
+ *                             player put there). Read once at startup -- SDL opens the Vulkan library before there is a
+ *                             device -- so the menu says a change takes a restart. Unset: whatever the launcher put in
+ *                             the environment (RECOMP_VULKAN_DRIVER) stands
  *   post_aa       post.c      0 | 1 (default 1)         FXAA on the finished frame (RECOMP_POST_AA wins)
  *   sharpen       post.c      0..1 (default 0.35)       CAS sharpening at output resolution, 0 off (RECOMP_SHARPEN wins)
  *   anisotropy    gfx_gpu.c   1 | 2 | 4 | 8 | 16 (default 16)   anisotropic texture filtering (RECOMP_ANISO wins)

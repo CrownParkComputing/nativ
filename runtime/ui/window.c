@@ -435,6 +435,19 @@ static void finger_script(void) {
 		p = strchr(p, ';'); if (p) p++;
 	}
 }
+/* THREE FINGERS AT ONCE: the menu. A handheld with a touchscreen and no stick buttons has no other
+ * way to reach it, and the Vita's own front panel is what games use one and two fingers on -- three
+ * deliberate simultaneous contacts is not something a Vita game asks for. The fingers are released
+ * as the menu opens, so the game never sees them held. */
+static int finger_menu(void) {
+	int n = 0;
+	for (int i = 0; i < ST_FINGERS; i++) n += st_down[i] != 0;
+	if (n < 3) return 0;
+	for (int i = 0; i < ST_FINGERS; i++) st_down[i] = 0;
+	overlay_toggle();
+	if (overlay_is_open()) { buttons = 0; touch_down = 0; gamepad_touch_release(); }
+	return 1;
+}
 static void screen_finger(const SDL_Event *e) {
 	if (!touch_any() && e->tfinger.touchID != SCRIPT_TOUCH_ID && SDL_GetTouchDeviceType(e->tfinger.touchID) != SDL_TOUCH_DEVICE_DIRECT) return;
 	int w = 0, h = 0; SDL_GetWindowSize(win, &w, &h);
@@ -449,6 +462,7 @@ static void screen_finger(const SDL_Event *e) {
 	} else if (!mouse_to_touch(mx, my, 1, &tx, &ty)) return;
 	st_x[k] = tx; st_y[k] = st_port[k] ? clampi(ty, REAR_Y0, REAR_Y1) : ty;
 	st_down[k] = 1;
+	if (e->type == SDL_EVENT_FINGER_DOWN) finger_menu();
 }
 
 int window_active(void) { return active; }
@@ -960,6 +974,12 @@ void window_run(void *(*fn)(void *), void *arg) {
 			 * closed. Opening (or re-opening by the same gamepad combo) clears whatever buttons/touch
 			 * were down so the game never sees them as still held on resume. */
 			if (e.type == SDL_EVENT_KEY_DOWN && !e.key.repeat && e.key.key == SDLK_F10) { overlay_toggle(); if (overlay_is_open()) { buttons = 0; touch_down = 0; gamepad_touch_release(); } }
+			/* Android's Back, the system gesture or button every handheld has: the menu. There is no
+			 * F10 on a handheld, and Android keeps the Guide button for itself, so without this the
+			 * only way in is both stick clicks -- which a device with no stick buttons cannot do at
+			 * all. The Vita has no Back, so no game loses anything. (SDL would otherwise let Back
+			 * close the activity.) */
+			if (e.type == SDL_EVENT_KEY_DOWN && !e.key.repeat && e.key.key == SDLK_AC_BACK) { overlay_toggle(); if (overlay_is_open()) { buttons = 0; touch_down = 0; gamepad_touch_release(); } }
 			if (e.type == SDL_EVENT_KEY_DOWN && !e.key.repeat && e.key.key == SDLK_ESCAPE) { if (overlay_is_open()) overlay_close(); else overlay_bar_dismiss(); }   /* (closed: Escape hides the menu bar and its menus) */
 			if (e.type == SDL_EVENT_GAMEPAD_BUTTON_DOWN && e.gbutton.button == SDL_GAMEPAD_BUTTON_GUIDE) { overlay_toggle(); if (overlay_is_open()) { buttons = 0; touch_down = 0; gamepad_touch_release(); } }
 			/* the menu on BOTH stick clicks together. The Vita has no L3 or R3 at all, so no game wants
