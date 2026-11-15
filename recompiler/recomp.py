@@ -1353,7 +1353,6 @@ def main():
     # --split N: a game is ~100x a firmware library; N part files (plus this one, with the tables)
     # compile in parallel and keep each translation unit a size compilers handle well
     nsplit = int(sys.argv[sys.argv.index("--split") + 1]) if "--split" in sys.argv else 0
-    parts = [[] for _ in range(nsplit)]
     if nsplit:
         base = sys.argv[2][:-2] if sys.argv[2].endswith(".c") else sys.argv[2]
         open(base + ".h", "w").write("\n".join(out + decls) + "\n")
@@ -1362,19 +1361,33 @@ def main():
         out += decls
     per = (sum(len(f.insns) for f in fns) // max(nsplit, 1)) + 1
     k = acc = 0
+    # Each part is written as it fills, rather than every function's C being held until the end: the
+    # functions go into the parts in order, so a part is finished the moment the next one starts.
+    # Holding them cost about a gigabyte of text as millions of small strings on a big game --
+    # DARIUSBURST (23.5 MB of code, 39k functions) took more than 22 GB and was killed for it.
+    inc = f'#include "{os.path.basename(base)}.h"' if nsplit else None
+    pf = open(f"{base}_part0.c", "w") if nsplit else None
+    if pf: pf.write(inc + "\n")
     for f in fns:
+        n = len(f.insns)
         body = f.build()
-        total += len(f.insns)
+        total += n
         bad += f.unimpl
         if nsplit:
-            parts[k] += body
-            acc += len(f.insns)
+            if body: pf.write("\n".join(body) + "\n")
+            acc += n
             if acc >= per and k < nsplit - 1:
-                k, acc = k + 1, 0
+                pf.close(); k, acc = k + 1, 0
+                pf = open(f"{base}_part{k}.c", "w"); pf.write(inc + "\n")
         else:
             out += body
-    for n, part in enumerate(parts):
-        open(f"{base}_part{n}.c", "w").write("\n".join([f'#include "{os.path.basename(base)}.h"'] + part) + "\n")
+        # a function's decoded instructions are finished with the moment it is written: only its entry
+        # and whether it is ARM are wanted afterwards (the dispatch tables below). Holding a million of
+        # them to the end is most of what this costs on a big game.
+        f.insns = ()
+    if pf: pf.close()
+    for n in range(k + 1, nsplit):   # the parts no function reached still have to exist for the build
+        open(f"{base}_part{n}.c", "w").write(inc + "\n")
     # --module NAME: a module loaded with the main program (a .suprx): its tables are suffixed and
     # register themselves with the host (main.c's module registry) before main() runs
     mod = sys.argv[sys.argv.index("--module") + 1] if "--module" in sys.argv else None

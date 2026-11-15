@@ -1,0 +1,40 @@
+# DARIUSBURST Chronicle Saviours (PCSE00792, US Vita release) -- Taito/Pyramid, the Vita entry in the
+# Darius line. Only facts about the game; nothing of its code or data (the format: pipeline/packconf.py).
+NAME = "DARIUSBURST Chronicle Saviours"
+# REGION: the release this pack plays (its content id UP1056-PCSE00792_00-DARIUSBURSTCS0US, North
+# America); another region's release is another build, not played yet
+REGION = "US"
+BASE = "game"
+# recompiled C split into this many part files. Its executable segment is 0x1773a78 (23.5 MB) -- twice
+# Killzone's ELF and eight times Super Stardust's -- so it takes far more parts than any game here yet.
+SPLIT = 64
+# sce_module/libc.suprx (C runtime, libm, the C++ library), libfios2 (its data is read through FIOS)
+# and libult (SceUlt, the user-level threading library -- the first game here to carry it), plus the
+# firmware's libgxm and its GPU services library (GXM runs as Sony's code; gxm_sony.c observes its
+# rendering boundary).
+MODULES = "libc libgxm_es4 libgpu_es4 libfios2 libult"
+
+# WHERE THIS STANDS (2026-11-15). Decrypted, imported and analysed; NOT YET RECOMPILED, and that is
+# where it stops. The game (v1.00) and its v1.11 update both decrypt from a NoNpDrm dump, the import
+# reports 40 libraries and 590 imports with every one named, and analyze finds 38,985 functions and
+# 41,748 body ranges -- a 54 MB analysis file, where Super Stardust's is 8 MB.
+#
+# The recompile does not fit in memory on a 31 GB machine. Measured, three times, in a
+# systemd-run scope so only the scope died: peak 21.9 GB against a 22 GB cap, then 23.6 GB against
+# 24 GB, each after the best part of an hour. The five libraries recompile fine; it is the game's own
+# 23.5 MB of code that will not.
+#
+# It is the DECODE phase, not the output: recomp.py builds every function with its decoded
+# instructions before it writes any of them, so a million-odd capstone instructions are all live at
+# once. Two things were fixed along the way and both are worth having (each verified byte-identical on
+# TxK) -- the parts are written as they fill instead of being held to the end, and a function's
+# instructions are released the moment it is written -- but neither touches the peak, which happens
+# before the first part is written. Making this game recompile means decoding lazily, one function at
+# a time, which is a real change to the recompiler and has not been attempted.
+
+# The build of the game this pack plays: the SHA-256 of its eboot.bin.elf (vitarecomp import tells a
+# copy's version by it). Decrypted 2026-11-15 from a NoNpDrm dump (app + patch, licence work.bin,
+# UP1056-PCSE00792_00-DARIUSBURSTCS0US).
+[versions."1.11"]
+sha256 = "3f7c185208a5ac4580fbe58daa088713e6b6df117fc0beedf2b505a5863acf8a"
+status = "recommended"    # the game with its 1.11 update layered over it (app0_patched)
