@@ -285,6 +285,14 @@ class Fn:
             m = ((1 << w) - 1) << lsb
             src = f"(({self.r(ops[1].reg, i)} << {lsb}) & 0x{m:x}u)" if mn == "bfi" else "0"
             out = [f"{d} = ({d} & 0x{~m & 0xffffffff:x}u) | {src};"]
+        elif mn == "uqsub8":
+            # the four bytes subtracted lane by lane, each saturating at zero (no flags: the saturating
+            # parallel operations leave GE alone, unlike uadd8/usub8). This is how a libc finds the end
+            # of a string -- DARIUSBURST's stops in strlen without it.
+            a, b = self.r(ops[1].reg, i), self.r(ops[2].reg, i)
+            out = [f"{{ uint32_t x = {a}, y = {b}, r = 0;"
+                   f" for (int k = 0; k < 32; k += 8) {{ uint32_t p = (x >> k) & 0xffu, q = (y >> k) & 0xffu;"
+                   f" r |= (p > q ? p - q : 0u) << k; }} {self.dst(ops[0].reg)} = r; }}"]
         elif mn == "clz":
             out = [f"{self.dst(ops[0].reg)} = CLZ({self.r(ops[1].reg, i)});"]
         elif mn == "rbit":

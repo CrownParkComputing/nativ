@@ -14,16 +14,33 @@ SPLIT = 64
 # rendering boundary).
 MODULES = "libc libgxm_es4 libgpu_es4 libfios2 libult"
 
-# WHERE THIS STANDS (2026-11-15). Decrypted, imported, analysed and RECOMPILED; not yet built or run.
-# The game (v1.00) and its v1.11 update both decrypt from a NoNpDrm dump, the import reports 40
-# libraries and 590 imports with every one named, and the recompile turns 39,879 functions and
-# 10,461,620 instructions into 1.4 GB of C across 64 parts, with 254 unsupported instructions
-# (0.002%). By far the largest game here: 23.5 MB of code, eight times Super Stardust's and twice
-# Killzone's, and ten times Super Stardust's instruction count.
+# WHERE THIS STANDS (2026-11-15). It BUILDS AND BOOTS, and stops at its loading screen. The game
+# (v1.00) and its v1.11 update decrypt from a NoNpDrm dump; the import reports 40 libraries and 590
+# imports with every one named; the recompile turns 39,879 functions and 10,461,620 instructions into
+# 1.4 GB of C across 64 parts with 254 unsupported (0.002%), and that builds to a 160 MB host. By far
+# the largest game here: 23.5 MB of code, eight times Super Stardust's, ten times its instruction count.
 #
-# It did not fit in memory at first, and that is why recomp.py now decodes lazily: a decoded capstone
-# instruction costs about 3 KB, the recompiler held all ten million of them at once, and the run was
-# killed three times at 22-24 GB. Peak is now 1.2 GB.
+# Running it: it opens package_region.dat, its data tables (mediapaths, rankingboardnametoid,
+# atlasreverseresolution, orcatrophylist, initialLang), nowloading.tx2 and newfont.tx2, and presents
+# THREE frames. Then it stops, at the same import call every time (1,838,37x, of which 1.48M are
+# strcmp -- it is building its asset tables).
+#
+# WHERE IT STOPS, exactly: libgxm's display-queue thread calls the game's display-queue callback and
+# the pointer is null --
+#     8900b0c0  ldr r0, [r3, #4]
+#     8900b0c4  ldr r3, [r4, #0x14]     <- the callback, out of libgxm's context
+#     8900b0c8  blx r3                  <- "call to 0: neither recompiled code nor an import"
+# so nothing ever calls sceDisplaySetFrameBuf and no fourth frame is presented. A second null call
+# follows from the game itself (lr 0x8200a7f7, "call to 0x1").
+#
+# That callback is set by the game's own sceGxmInitialize, which is Sony's real code here (libgxm runs
+# recompiled, nothing of the host's intervenes), and this libgxm is the same module Super Stardust
+# uses -- same 0x23d04 bytes -- which presents thousands of frames. So the fault is in how THIS game
+# reaches initialisation, not in the module. Next: trace the game's call to sceGxmInitialize and look
+# at the params it passes.
+#
+# One instruction had to be translated to get this far: uqsub8, the parallel-byte saturating subtract
+# a libc finds the end of a string with. Eight sites in libc, and it stopped in strlen without it.
 
 # The build of the game this pack plays: the SHA-256 of its eboot.bin.elf (vitarecomp import tells a
 # copy's version by it). Decrypted 2026-11-15 from a NoNpDrm dump (app + patch, licence work.bin,

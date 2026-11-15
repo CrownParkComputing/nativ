@@ -191,6 +191,13 @@ def model(st, insns):
             e = ux(st.reg(names[1]) >> (bits * ops[1].vector_index), bits) if names[1][0] == "d" else ux(st.r[recomp.GPR[names[1]]], bits)
             st.setreg(D, pack([e] * (width(D) // bits), bits)); continue
         W = width(D)
+        if mn == "uqsub8":   # four bytes, each saturating at zero; GE is not touched
+            x, y = st.r[recomp.GPR[names[1]]], st.r[recomp.GPR[names[2]]]
+            r = 0
+            for k in range(0, 32, 8):
+                pv, q = (x >> k) & 0xff, (y >> k) & 0xff
+                r |= (pv - q if pv > q else 0) << k
+            st.r[recomp.GPR[names[0]]] = r; continue
         if mn in ("vzip", "vuzp") and len(names) == 2 and names[1] and names[1][0] == D[0]:
             # VZIP interleaves the two registers' elements (a0 b0 a1 b1 ...); VUZP is its inverse, the
             # concatenation's even elements then its odd ones. Either way the first half of the result
@@ -316,6 +323,8 @@ CASES = [
     ("vshrn.i16 d0, q1, #3", None), ("vshrn.i16 d0, q1, #8", None), ("vshrn.i32 d0, q1, #16", None), ("vshrn.i32 d5, q3, #1", None), ("vshrn.i64 d0, q1, #32", None),
     ("vmov.u16 r0, d3[2]", None), ("vmov.s16 r1, d3[1]", None), ("vmov.u8 r2, d4[0]", None), ("vmov.s8 r3, d4[7]", None), ("vmov.u16 r4, d9[3]", None),
     # the forms the games hit (Uncharted, Unit 13) and their siblings
+    # DARIUSBURST's libc finds the end of a string with this
+    ("uqsub8 r0, r1, r2", None), ("uqsub8 r3, r3, r4", None), ("uqsub8 r5, r6, r6", None),
     # vzip.16 q12, q13 is Super Stardust Delta's audio, and froze it the moment a level started
     ("vzip.16 q12, q13", None), ("vzip.8 d0, d1", None), ("vzip.16 d2, d3", None), ("vzip.32 d4, d5", None),
     ("vzip.8 q0, q1", None), ("vzip.32 q2, q3", None), ("vzip.16 d7, d7", None),
