@@ -111,6 +111,12 @@ void settings_save(void);
 static ImGuiContext *g_ctx;
 static bool g_has_window;      /* overlay_init was given a real SDL_Window: the platform backend is live */
 static SDL_Window *g_window;   /* the same window (unused for sizing: the menu is a fixed point size) */
+/* give the page's first control the focus. Set when the menu opens and when L1/R1 changes section:
+ * ImGui moves the focus with the d-pad from whatever holds it, so with NOTHING holding it the pad
+ * does nothing at all and the menu looks dead. ImGui focuses a window's first item itself when the
+ * window is entered BY a nav input, which is how it came out right on a desktop and wrong on a
+ * handheld -- there the menu is opened by Back or a touch, neither of which is one. */
+static bool g_focus_page;
 /* written by the window thread, read by the game thread (display.c's pause, window.c's audio): atomic,
  * like every other flag that crosses those threads (rscale_req, osd_level_v). g_paused: Game > Pause
  * in the menu bar -- the game held (display.c, as for the menu) with nothing but a banner on screen */
@@ -162,7 +168,14 @@ int overlay_is_open(void) { return g_ctx && g_open; }
  * or Game > Pause is on, whichever lasts longer (overlay_game_paused is what display.c and window.c's
  * audio actually poll) */
 static void apply_pause(void) { display_set_paused(g_open || g_paused); }
-void overlay_open(void) { if (g_ctx) { intro_end(); g_open = true; apply_pause(); } }   /* (F10 over the touch card: it's skipped) */
+void overlay_open(void) {   /* (F10 over the touch card: it's skipped) */
+	if (!g_ctx) return;
+	intro_end(); g_open = true; g_focus_page = true; apply_pause();
+	/* said once: a pad that the menu never sees is the difference between "the d-pad does nothing"
+	 * and "the d-pad does nothing HERE", and only this can tell them apart */
+	static bool said;
+	if (!said) { said = true; std::fprintf(stderr, "    menu: gamepad %s\n", (ImGui::GetIO().BackendFlags & ImGuiBackendFlags_HasGamepad) ? "yes" : "no (keyboard and touch only)"); }
+}
 static void intro_end(void) {   /* the touch card, done or skipped: never again */
 	if (!g_intro) return;
 	g_intro = false; settings_set_int("touch_intro_shown", 1); settings_save();
@@ -592,7 +605,7 @@ static void build_ui(void) {
 	/* the sections; a controller's L1 / R1 (or Ctrl+Tab, Ctrl+Shift+Tab) step them in the sidebar's order -- the sidebar and
 	 * the page are separate panels the D-pad doesn't cross -- and the new page's first row takes the focus */
 	static const int order[TAB_N] = {TAB_DISPLAY, TAB_GAME, TAB_CONTROLS, TAB_PERF, TAB_HELP};
-	static bool focus_page;
+	bool &focus_page = g_focus_page;
 	if (!ImGui::IsAnyItemActive()) {
 		const bool ctrl = io.KeyCtrl, shift = io.KeyShift; int step = 0;
 		if (ImGui::IsKeyPressed(ImGuiKey_GamepadL1, false) || (ctrl && shift && ImGui::IsKeyPressed(ImGuiKey_Tab, false))) step = -1;
@@ -620,7 +633,13 @@ static void build_ui(void) {
 	ImGui::PopStyleColor();
 	ui::heading(g_tab_names[g_section], em * 1.25f);
 	ImGui::TextDisabled("%s", g_tab_blurbs[g_section]);
-	if (focus_page) { ImGui::SetKeyboardFocusHere(); focus_page = false; }   /* (the page's first control) */
+	if (focus_page) {
+		ImGui::SetKeyboardFocusHere();      /* (the page's first control) */
+		ImGui::SetNavCursorVisible(true);   /* ...and SHOW it: ImGui hides the nav cursor after a mouse
+			or touch, so on a handheld -- where the menu is opened by Back or a tap -- the focus was
+			set but invisible, and the menu looked dead to the d-pad even while it was listening. */
+		focus_page = false;
+	}
 	ImGui::Dummy(ImVec2(0, em * 0.2f));
 	static void (*const pages[TAB_N])(void) = {page_display, page_performance, page_game, page_controls, page_help};
 	pages[g_section]();
