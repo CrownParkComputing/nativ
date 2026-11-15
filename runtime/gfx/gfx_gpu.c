@@ -3725,7 +3725,25 @@ static int view_mode(uint32_t tgt_fmt, const GfxTexture *tex, uint32_t *tex_bpp,
 	case 0x21000000u: return xb == 0x1a000000u ? 1 : -1;                                        /* F11F11F10 as F11F11F10 */
 	case 0x41000000u: return xb == 0x9a000000u ? 2 : -1;                                        /* U2F10F10F10 as U2F10F10F10 */
 	case 0x11000000u: return xb == 0x0c000000u ? 3 : xb == 0x0d000000u ? 4 : -1;                /* F32F32 as U8U8U8U8 / S8S8S8S8 bytes */
-	case 0x00000000u: return (tgt_fmt & 0x00300000u) == 0 && xb == 0x0c000000u ? 0 : -1;      /* U8U8U8U8 as U8U8U8U8 (a sub-rectangle; the exact case binds the target itself) */
+	case 0x00000000u: {                                                                         /* U8U8U8U8 as U8U8U8U8 (a sub-rectangle; the exact case binds the target itself) */
+		if (xb != 0x0c000000u) return -1;
+		/* ...including a target whose own components are not in the default order. The colour format's
+		 * swizzle (0x00300000: ABGR, ARGB, RGBA, BGRA) says how guest BYTES map to the colour the
+		 * hardware blended, by the same sw4 table a texture's swizzle uses -- gfx_soft.c's
+		 * target_read_raw_of is the reference, and its four cases are sw4[0..3] exactly. The GPU's
+		 * target texture holds the colour itself, so a view has to undo the target's permutation
+		 * before applying the texture's: selector = inverse(target)[texture]. Requiring the target's
+		 * to be the default sent every swizzled target down the guest-memory path instead -- WipEout
+		 * 2048 samples one 480x272 ARGB target a frame, and reading it back cost a fence wait on the
+		 * whole frame's GPU work: 40 ms of a 53 ms frame, the difference between 20 and 60 fps. */
+		const uint32_t tsw = (tgt_fmt >> 20) & 3;
+		if (tsw) {
+			uint8_t inv[4];
+			for (int j = 0; j < 4; j++) inv[sw4[tsw][j]] = (uint8_t)j;
+			for (int k = 0; k < 4; k++) if (swz[k] < 4) swz[k] = inv[swz[k]];   /* (4 and 5 are the constants 0 and 1) */
+		}
+		return 0;
+	}
 	}
 	return -1;
 }
