@@ -10,17 +10,50 @@ BASE = "game"
 # one and three quarter times Super Stardust's, a fifth of DARIUSBURST's.
 SPLIT = 32
 # sce_module/libc.suprx (C runtime, libm, the C++ library) plus the firmware's libgxm and its GPU
-# services library (GXM runs as Sony's code; gxm_sony.c observes its rendering boundary). libfios2
-# because libc.suprx itself imports SceFios2, not because the eboot does. The copy also ships
-# libult.suprx, but nothing here imports SceUlt, so it is left out until something asks for it.
-MODULES = "libc libgxm_es4 libgpu_es4 libfios2"
+# services library (GXM runs as Sony's code; gxm_sony.c observes its rendering boundary).
+#
+# BOTH FIOS2 MODULES, which is the catch. This copy ships each of libc, libfios2 and libult twice,
+# once plainly and once with an "_m" suffix, and the pair are NOT interchangeable: the "_m" build
+# exports the same library under a renamed symbol. libfios2.suprx exports SceFios2/SceLibFios2;
+# libfios2_m.suprx exports mceFios2/mceLibFios2. The eboot imports mceFios2 and libc.suprx imports
+# SceFios2, so the game needs both, and with only the plain one every mceFios2_* call fell through to
+# "not implemented -- returns 0" and the game never read a byte of its own data: it sat polling
+# sceKernelGetProcessTime and sceDisplayGetVcount forty million times a run, drawing six empty draws
+# a frame to a black screen.
+#
+# libc is the plain one: the eboot imports SceLibc/SceLibm/SceLibstdcxx, which is what it exports
+# (libc_m exports mceLibc and is not what this eboot asks for). libult.suprx ships too, but nothing
+# imports SceUlt, so it is left out until something asks.
+MODULES = "libc libgxm_es4 libgpu_es4 libfios2 libfios2_m"
 
-# WHERE THIS STANDS (2026-11-15). Just imported: not yet recompiled, not yet run. The eboot is
-# 5,509,120 bytes and imports 47 libraries / 598 functions, 553 of them named. Beyond the usual
-# graphics and kernel set it asks for SceNgs (audio), SceFiber (kernel.c runs each fiber as a host
-# thread), SceAvPlayer/SceMp4/SceVideodecUser/SceAudiodecUser (its video), SceCamera, SceMotion,
-# SceNear, ScePhotoExport and SceScreenShot, and a full online set (SceNp*, SceHttp, SceNet, SceSsl)
-# -- so RECOMP_GAME_OPTIONS=online is likely to matter here as it does for Super Stardust.
+# Where this stands (2026-11-15). It BOOTS, LOADS AND DRAWS: it reads its own archives and reaches
+# the GAME MODE menu, fully rendered, with the DLC campaigns (HD, Fury) offered alongside the single
+# player one. Not yet taken into a race. The eboot is 5,509,120 bytes; the recompile turns 14,972
+# functions and 1,509,640 instructions into 237 MB of C across 32 parts with 256 unsupported
+# (0.017%), and that builds to a 44 MB host.
+#
+# What it took, beyond the pipeline:
+#
+#   sceDisplayGetVcount had to answer the vblank counter instead of 0 (runtime/gfx/display.c). This
+#   game paces itself by POLLING it rather than waiting on vblank, so against a stub it spun: 295
+#   million calls for two frames.
+#
+#   FUNCTION_SEEDS below: its MD5 is hand-written threaded code. One body at 0x8134abb0 walks a table
+#   of round snippets -- "addw ip, pc, #N" then "blx ip" to run one, "add.w ip, ip, #0x10; bx ip" to
+#   step to the next descriptor -- so the four round functions, the three descriptors and the epilogue
+#   are reached only through a register the analysis never sees loaded. Found one per run otherwise,
+#   at a rebuild each; read the routine instead and seeded all eight at once. (An ADR-into-a-register
+#   scan in analyze.py would find the four snippets for any game, next to the movw/movt one already
+#   there -- worth doing when there is time to re-gate every existing title for it.)
+#
+#   BOTH FIOS2 MODULES, above -- the one that mattered. Until then every mceFios2_* call answered
+#   "not implemented -- returns 0", the game never read a byte of its own data, and it sat polling
+#   sceKernelGetProcessTime and sceDisplayGetVcount forty million times a run, drawing six empty
+#   draws a frame to a black screen. It looked like a hang and was a missing module.
+#
+#   Its add-ons had to be installed at all: `vitarecomp add` used to say an add-on needs nothing,
+#   which is true of its LICENCE and false of its DATA. WipEout's HD and Fury campaigns are two
+#   300 MB archives the game opens at addcont0:/<dir>/..., and it simply went without them.
 #
 # About this copy. The dump is MaiDumpTool's, not NoNpDrm's: there is no sce_sys/package/work.bin and
 # no .rif anywhere, and its eboot is fake-signed. It decrypts with no klicensee at all ("klicensee:
@@ -28,6 +61,14 @@ MODULES = "libc libgxm_es4 libgpu_es4 libfios2"
 # game left no licence behind, since neither of them ever wanted one (pipeline/vitarecomp.py).
 #
 # The game is played as its 1.04 update layered over the release (app0_patched, 530 files).
+#
+# Still to look at: its video (SceAvPlayer/SceMp4/SceVideodecUser/SceAudiodecUser), its audio
+# (SceNgs), and the online set (SceNp*, SceHttp, SceNet, SceSsl) -- RECOMP_GAME_OPTIONS=online is
+# likely to matter here as it does for Super Stardust.
+
+# The entries its threaded MD5 is reached through (see above): four round snippets, three descriptors
+# and the epilogue. Without these a run falls into one of them and stops.
+FUNCTION_SEEDS = "0x8134ac0c:thumb 0x8134ac1c:thumb 0x8134ac2e:thumb 0x8134ac3e:thumb 0x8134ac50:thumb 0x8134ac60:thumb 0x8134ac72:thumb 0x8134ac82:thumb"
 
 # The build of the game this pack plays: the SHA-256 of its eboot.bin.elf (vitarecomp import tells a
 # copy's version by it). Decrypted 2026-11-15 from a MaiDump dump (game + its 1.04 update).

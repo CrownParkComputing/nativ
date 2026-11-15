@@ -243,13 +243,42 @@ def cmd_scan(T, rest):
         run(argv, env=e)
 
 
-def cmd_add(T, rest):
-    nobuild = "--no-build" in rest; args = [a for a in rest if a != "--no-build"]
-    # what the copy is, from its plain param.sfo or PKG header (packs.py info: kind title version content-id)
+def ident_of(T):
+    """what a copy is, from its plain param.sfo or PKG header (packs.py info: kind title version content-id)"""
     r = subprocess.run([PY, os.path.join(R, "packs.py"), "info", os.path.realpath(T)], env=env_with(TOOLS_ENV), capture_output=True, text=True)
     ident = r.stdout.split() if r.returncode == 0 and len(r.stdout.split()) >= 4 else ["game", "-", "-", "-"]
-    kind, tid, cid = ident[0], ident[1], ident[3]
-    if kind == "addon": die(f"{tid}: {os.path.basename(T)} is an add-on: nothing to add -- the game gets every add-on it asks for (runtime/core/apputil.c)", 0)
+    return ident[0], ident[1], ident[3]
+
+
+def add_addon(T, tid, cid):
+    """An add-on's DATA. Its licence needs nothing -- apputil.c grants the game every add-on it asks
+    for -- but the files have to be where it looks for them, and nothing used to put them there: the
+    game opened addcont0:/<dir>/... , got "not found", and simply went without. WipEout 2048's HD and
+    Fury campaigns are two 300 MB archives that arrive this way.
+
+    The console's path is ux0:addcont/<title>/<dir>, where <dir> is the tail of the content id
+    (UP9000-PCSA00015_00-DLC1W2048PACKAGE -> DLC1W2048PACKAGE), which is exactly what the game asks
+    for. So the copy is linked in under the game's own tree and import points fs/addcont0 at it."""
+    name = cid.rpartition("-")[2] if cid and "-" in cid else os.path.basename(os.path.normpath(T))
+    if not TITLE_RE.match(tid): die(f"{T}: an add-on with no title id")
+    dst = os.path.join(DUMP, "decrypted", tid, "addcont0", name)
+    os.makedirs(os.path.dirname(dst), exist_ok=True)
+    link_dir(os.path.realpath(T), dst)
+    say(f"{tid}: add-on {name} -> {dst}")
+
+
+def cmd_add(T, rest):
+    nobuild = "--no-build" in rest; args = [a for a in rest if a != "--no-build"]
+    kind, tid, cid = ident_of(T)
+    if kind == "addon": add_addon(T, tid, cid); return
+    # a folder of add-ons (a release's whole addcont directory): each one, and nothing else to do
+    if tid == "-" and os.path.isdir(T):
+        subs = [os.path.join(T, d) for d in sorted(os.listdir(T)) if os.path.isdir(os.path.join(T, d))]
+        found = [(d, *ident_of(d)) for d in subs]
+        addons = [(d, t, c) for d, k, t, c in found if k == "addon"]
+        if addons and len(addons) == len(found):
+            for d, t, c in addons: add_addon(d, t, c)
+            return
     if kind == "firmware": cmd_firmware(T); return
     if kind not in ("game", "update"): die(f"{T}: a {kind}, not a game or its update")
     # no licence given and none in the copy: the player's kept licence for its content id (licenses.py; an update's is its
@@ -424,6 +453,9 @@ def cmd_import(g, src):
         run([PY, os.path.join(DECRYPT, "fself2elf.py"), src, os.path.join(W, "elf")])
         if os.path.isdir(os.path.join(src, "sce_module")): run([PY, os.path.join(DECRYPT, "fself2elf.py"), os.path.join(src, "sce_module"), os.path.join(W, "elf")])
         if os.path.isdir(os.path.join(src, "data")): shutil.copytree(os.path.join(src, "data"), os.path.join(app0, "data"), symlinks=True, dirs_exist_ok=True)
+    # the add-ons this game has been given (vitarecomp add on each): addcont0:/<dir>/... reaches them
+    if os.path.isdir(os.path.join(W, "addcont0")):
+        link_dir(os.path.join(W, "addcont0"), os.path.join(OUT, "fs", "addcont0"))
     # VERSIONS (packs/<title>/pack.toml): the builds the pack's hooks and addresses were made for -- another version or region
     # would mis-hook, so say so here rather than crash later; which one this is goes to $W/version, for the pack's per-version settings
     if g.VERSIONS:
