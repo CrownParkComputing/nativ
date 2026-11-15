@@ -26,9 +26,9 @@ SPLIT = 32
 # imports SceUlt, so it is left out until something asks.
 MODULES = "libc libgxm_es4 libgpu_es4 libfios2 libfios2_m"
 
-# Where this stands (2026-11-15). It BOOTS, LOADS AND DRAWS: it reads its own archives and reaches
-# the GAME MODE menu, fully rendered, with the DLC campaigns (HD, Fury) offered alongside the single
-# player one. Not yet taken into a race. The eboot is 5,509,120 bytes; the recompile turns 14,972
+# Where this stands (2026-11-15). It PLAYS, at a locked 60 fps: its archives load, the GAME MODE menu
+# offers the DLC campaigns (HD, Fury) beside the single player one, and a race renders complete --
+# ship, track, crowd, sky, engine glow and HUD. The eboot is 5,509,120 bytes; the recompile turns 14,972
 # functions and 1,509,640 instructions into 237 MB of C across 32 parts with 256 unsupported
 # (0.017%), and that builds to a 44 MB host.
 #
@@ -61,6 +61,17 @@ MODULES = "libc libgxm_es4 libgpu_es4 libfios2 libfios2_m"
 # game left no licence behind, since neither of them ever wanted one (pipeline/vitarecomp.py).
 #
 # The game is played as its 1.04 update layered over the release (app0_patched, 530 files).
+#
+#   TWO RENDER-TARGET READBACKS A FRAME, which is what held it at 20 fps. A readback is not a copy:
+#   it is SubmitAndAcquireFence then WaitForGPUFences, so the CPU stalls on the whole frame's queued
+#   GPU work. Against 856 draws costing 43 ms between them, the two downloads cost 35-44 ms alone.
+#   Both were view-path gaps, both now closed in runtime/gfx/gfx_gpu.c:
+#     - a 480x272 target declared ARGB: view_mode served mode 0 only for the default component order
+#     - a 256x1536 target, six 256x256 faces: the reflection cube map. A cube texture's layout is 3
+#       and view_mapping had no case for it, so it fell all the way through to guest memory. The six
+#       faces are consecutive in memory and so are bands of the target, which copy into the 6-layer
+#       array the ordinary cube upload makes -- on the GPU, with no wait (cube_view).
+#   22 fps -> 60, and no target is downloaded per frame any more.
 #
 # Still to look at: its video (SceAvPlayer/SceMp4/SceVideodecUser/SceAudiodecUser), its audio
 # (SceNgs), and the online set (SceNp*, SceHttp, SceNet, SceSsl) -- RECOMP_GAME_OPTIONS=online is

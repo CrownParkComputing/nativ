@@ -3859,6 +3859,75 @@ static TexEntry *mip_view(const GfxTexture *tex, TargetEntry *best, SDL_GPUTextu
 	}
 	return v;
 }
+/* A CUBE MAP rendered by the GPU, as the 6-layer array the ordinary cube upload makes. Each face is
+ * a whole image and the six follow each other in memory, so a target holding all six is a column of
+ * bands -- WipEout 2048 reflects the city in a 256x1536 target, six 256x256 faces, and samples it
+ * every frame.
+ *
+ * view_mapping has no case for a cube (its layout is 3; it handles linear, Morton and 32x32 tiling),
+ * so this used to fall all the way through to the guest-memory path: a download of the whole target,
+ * which is a FENCE WAIT ON THE FRAME'S WHOLE GPU QUEUE and cost 20-35 ms of a 60 ms frame. Copying
+ * the bands into the array on the GPU costs no wait at all.
+ *
+ * Only the plain case: one level, U8U8U8U8 in the default order at its natural stride, faces as wide
+ * as the target. A band is contiguous in memory for a linear target, and for a 32x32-tiled one when
+ * it is a whole number of tile rows -- anything else (Morton, a part-width face) is left to the paths
+ * below. 0: not that shape. */
+static TexEntry *cube_view(const GfxTexture *tex, TargetEntry *best) {
+	if (((tex->u_mode >> 4) & 3) != 3 || gfx_texture_cube_levels(tex) != 1) return 0;
+	if ((tex->format & 0xfff) || (tex->format & 0x9F007000u) != 0x0c000000u) return 0;   /* (mip_view's test: a linear U8U8U8U8 (ABGR) at its natural stride) */
+	if (best->kind != TK_U8 && best->kind != TK_U8S) return 0;
+	if (best->type != 0 && best->type != 1) return 0;
+	uint32_t y0[6];
+	for (int f = 0; f < 6; f++) {
+		GfxTexture x; gfx_texture_face_level(tex, f, 0, &x);
+		if (x.width != best->width || x.data < best->addr) return 0;
+		const uint32_t off = x.data - best->addr;
+		if (best->type == 0) {                                  /* linear: whole rows */
+			const uint32_t pitch = 4u * best->width;
+			if (off % pitch) return 0;
+			y0[f] = off / pitch;
+		} else {                                                /* 32x32 tiles: whole tile rows */
+			const uint32_t per = 4u * best->width * 32u;
+			if (off % per || x.height % 32u) return 0;
+			y0[f] = off / per * 32u;
+		}
+		if (y0[f] + x.height > best->height) return 0;
+	}
+	GfxTexture f0; gfx_texture_face_level(tex, 0, 0, &f0);
+	const SDL_GPUTextureFormat fmt = kind_format(best->kind);
+	TexEntry *v = 0;
+	for (int i = 0; i < nviews; i++) { TexEntry *e = &views[i]; if (e->layout == 3 && e->addr == tex->data && e->format == tex->format && e->width == f0.width && e->height == f0.height && e->sx == best->sx && e->sy == best->sy && e->vfmt == fmt) { v = e; break; } }
+	if (!v) {
+		if (nviews < MAXVIEW) v = &views[nviews++];
+		else { v = &views[0]; for (int i = 1; i < MAXVIEW; i++) if (views[i].used < v->used) v = &views[i];
+			batch_retire(v->tex, "view released");
+			if (v->tex) SDL_ReleaseGPUTexture(gpu(), v->tex);
+			for (int a = 0; a < 4; a++) for (int b = 0; b < 2; b++) for (int c = 0; c < 3; c++) for (int d = 0; d < 3; d++) if (v->samp[a][b][c][d]) SDL_ReleaseGPUSampler(gpu(), v->samp[a][b][c][d]); }
+		memset(v, 0, sizeof *v);
+		v->addr = tex->data; v->format = tex->format; v->width = f0.width; v->height = f0.height; v->levels = 1; v->layout = 3; v->vfmt = fmt; v->sx = best->sx; v->sy = best->sy;
+		SDL_GPUTextureCreateInfo tci = { .type = SDL_GPU_TEXTURETYPE_2D_ARRAY, .format = fmt, .usage = SDL_GPU_TEXTUREUSAGE_SAMPLER,
+			.width = TSX(v, f0.width), .height = TSY(v, f0.height), .layer_count_or_depth = 6, .num_levels = 1, .sample_count = SDL_GPU_SAMPLECOUNT_1 };
+		v->tex = SDL_CreateGPUTexture(gpu(), &tci);
+		if (!v->tex) { memset(v, 0, sizeof *v); return 0; }   /* (an empty slot: never matched) */
+	}
+	v->used = ++tex_clock; v->vfilt = tex->min_filter || tex->mag_filter; v->vlinear = best->kind == TK_U8S;
+	if (v->view_src != best || v->view_gen != best->gen || v->view_depth) {
+		target_sync_for_gpu(best);   /* (guest memory newer after a CPU write: up first) */
+		SDL_GPUCommandBuffer *cmd = SDL_AcquireGPUCommandBuffer(gpu());
+		if (!cmd) return 0;
+		SDL_GPUCopyPass *cp = SDL_BeginGPUCopyPass(cmd);
+		for (int f = 0; f < 6; f++) {
+			SDL_GPUTextureLocation from = { .texture = best->color, .x = 0, .y = TSY(best, y0[f]) };
+			SDL_GPUTextureLocation to = { .texture = v->tex, .layer = (Uint32)f };
+			SDL_CopyGPUTextureToTexture(cp, &from, &to, TSX(v, f0.width), TSY(v, f0.height), 1, false);
+		}
+		SDL_EndGPUCopyPass(cp);
+		SDL_SubmitGPUCommandBuffer(cmd);   /* (ahead of the pending batch, which samples it) */
+		v->view_src = best; v->view_gen = best->gen; v->view_depth = 0;
+	}
+	return v;
+}
 /* the texture's binding when it reads a render target's memory: a view (returned), the target's
  * own colour texture (*exact set, 0 returned: the exact U8U8U8U8 case), or 0 with every overlapping
  * target synced to guest memory for the ordinary decode (no view known for the pair, or disabled) */
@@ -3906,6 +3975,7 @@ static TexEntry *target_view(const GfxTexture *tex, TargetEntry **exact) {
 	const int snap2 = snap && scene_snap == 2 && best == scene_entry && best->snap && !dbest;   /* the starting pixels in the GPU snapshot */
 	if (snap && !snap2) { if (scene_snap == 2) snap_to_guest(scene_entry); goto guest; }
 	if (best && !dbest && gfx_texture_levels(tex) > 1 && !no_views()) { TexEntry *mv = mip_view(tex, best, snap2 ? best->snap : 0, snap2 ? best->snap_gen : 0); if (mv) return mv; }   /* every level a GPU target (the transfer chain's) */
+	if (best && !dbest && !snap2 && !no_views()) { TexEntry *cv = cube_view(tex, best); if (cv) return cv; }   /* a cube map the GPU rendered: its six faces as the array's layers */
 	if (ex && !snap2 && (!dbest || best->gen > dbest->gen) && !getenv("RECOMP_GPU_DEBUG_NO_RTT")) {
 		if (best == scene_entry) batch_flush("scene target sampled");   /* sampled while it is the attachment (undefined either way): at least after the draws before it */
 		*exact = best; return 0;
