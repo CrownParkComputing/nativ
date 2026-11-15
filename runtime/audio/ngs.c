@@ -27,11 +27,16 @@
 
 
 enum { DEF_MASTER = 1, DEF_SIMPLE, DEF_REVERB, DEF_OTHER, DEF_SCREAM, DEF_SCREAM_AT9, DEF_COMPRESSOR, DEF_SIDECHAIN,
-       DEF_TEMPLATE1, DEF_ATRAC9 };   /* the plain voices, not Sony's Scream ones: TxK builds its racks from these */
+       DEF_TEMPLATE1, DEF_ATRAC9,   /* the plain voices, not Sony's Scream ones: TxK builds its racks from these */
+       DEF_MIXER };   /* appended: these numbers go in the guest's definition object and show in the rack log */
 /* a bus that passes what reaches it through (no dynamics yet): the compressor, and the side-chain
  * compressor -- the same with a second input (1) carrying the key signal that drives its gain
- * reduction, which is never part of its output */
-#define PASS_BUS(d) ((d) == DEF_COMPRESSOR || (d) == DEF_SIDECHAIN)
+ * reduction, which is never part of its output.
+ * The mixer buss is the plain one: it sums its inputs and passes them on, which is all a pass-bus
+ * does here. DARIUSBURST routes everything through six of them, and while sceNgsVoiceDefGetMixerBuss
+ * was a stub returning 0 those racks came out DEF_OTHER -- no accumulator, not playing -- so every
+ * voice patched into one went nowhere and the game was silent. */
+#define PASS_BUS(d) ((d) == DEF_COMPRESSOR || (d) == DEF_SIDECHAIN || (d) == DEF_MIXER)
 /* voices whose module 0 is a PCM player (the simple voice FMOD uses; Sony's Scream library's; the
  * template voice, whose module 0 is the same player with an envelope and filters after it) */
 #define PCM_PLAYER(d) ((d) == DEF_SIMPLE || (d) == DEF_SCREAM || (d) == DEF_TEMPLATE1)
@@ -327,6 +332,7 @@ static void h_def_template1(Cpu *c) { RET(defn(DEF_TEMPLATE1)); }
 static void h_def_at9(Cpu *c) { RET(defn(DEF_ATRAC9)); }
 static void h_def_compressor(Cpu *c) { RET(defn(DEF_COMPRESSOR)); }
 static void h_def_sidechain(Cpu *c) { RET(defn(DEF_SIDECHAIN)); }
+static void h_def_mixer(Cpu *c) { RET(defn(DEF_MIXER)); }
 
 /* ---- system and racks */
 /* (params, *size): how much memory libngs wants for the system. Nothing here uses the block the
@@ -1241,6 +1247,7 @@ const HleEntry hle_ngs[] = {
 	{"sceNgsVoiceDefGetScreamAtrac9Voice", h_def_scream_at9}, {"sceNgsVoiceDefGetCompressorBuss", h_def_compressor},
 	{"sceNgsVoiceDefGetTemplate1", h_def_template1}, {"sceNgsVoiceDefGetAtrac9Voice", h_def_at9},
 	{"sceNgsVoiceDefGetCompressorSideChainBuss", h_def_sidechain},
+	{"sceNgsVoiceDefGetMixerBuss", h_def_mixer},
 	{"sceNgsVoiceSetFinishedCallback", h_voice_finished_cb}, {"sceNgsVoiceSetModuleCallback", h_voice_module_cb},
 	{"sceNgsVoiceGetParamsOutOfRange", h_params_out_of_range}, {"sceNgsVoiceInit", h_ok}, {"sceNgsPatchGetInfo", h_patch_info},
 	{"sceNgsAT9GetSectionDetails", h_at9_section},

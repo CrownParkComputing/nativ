@@ -18,6 +18,9 @@ MODULES = "libc libgxm_es4 libgpu_es4 libfios2 libult"
 # notice and then the cabinet dialog (RECOMP_INPUT masks; 0x4000 is cross). No reference frame is
 # accepted yet -- the cabinet it assigns ("Cabinet:0026") is part of the frame and has not been shown
 # to be the same every run, so the gate would have to land somewhere else or wait for the menu alone.
+# RECOMP_MOUSE_LOOK=0: nothing in this game is aimed with the mouse -- it is buttons and the touch
+# screen -- so capturing the pointer only traps it in the window (as for TxK).
+RUN_ENV = "RECOMP_MOUSE_LOOK=0"
 TEST_ENV = "RECOMP_GFX=gpu"
 TEST_INPUT = "1300-1340:4000,1500-1540:4000,1700-1740:4000,1900-1940:4000,2100-2140:4000"
 TEST_FRAMES = 2600
