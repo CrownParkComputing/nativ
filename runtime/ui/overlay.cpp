@@ -236,7 +236,7 @@ static void set_osd(int level) { metrics_osd_set(level); settings_set_int("osd",
  * beside them -- keep in sync with its event loop). The bar's own shortcut texts name the same keys. */
 static const char *const g_shortcuts[][3] = {
 	{"Menu bar", "Move the mouse to the top edge (Esc hides it)", "Tap the tab at the top centre (touch screen)"},
-	{"This menu (pauses the game)", "F10 (Esc closes it)", "Guide, or Back + Start together"},
+	{"This menu (pauses the game)", "F10 (Esc closes it)", "Guide, or both stick clicks (L3 + R3) together"},
 	{"On-screen stats: off, FPS, full", "F1", "\u2014"},
 	{"Resolution: 1\u00d7 to 6\u00d7", "F2", "\u2014"},
 	{"The rear camera's lamp", "F7", "\u2014"},

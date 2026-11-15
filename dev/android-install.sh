@@ -83,13 +83,38 @@ if [[ -n ${TURNIP_DRIVER:-} ]]; then
 fi
 
 echo "== packaging"
-# the manifest, per game: its own application id and its own name under the launcher
+# the game's own icon on the launcher: every Vita title carries one in sce_sys/icon0.png (128x128).
+# Without it the package has no resources at all and Android shows its default robot for every game.
+ICONSRC=$(readlink -f "$OUT/fs/app0")/sce_sys/icon0.png
+RES=() ICONATTR=
+if [[ -f $ICONSRC ]]; then
+  mkdir -p "$B/res/mipmap-xxhdpi" "$B/res/mipmap-anydpi-v26"
+  cp "$ICONSRC" "$B/res/mipmap-xxhdpi/ic_launcher.png"
+  # ...as an ADAPTIVE icon, with the art as the background layer. A legacy icon is wrapped by the
+  # launcher in a white rounded backdrop and shrunk inside it; as the background layer the art is
+  # scaled to the whole 108dp canvas and the launcher's mask cuts the shape straight out of it, so it
+  # fills the icon edge to edge with no white border. The foreground layer is empty.
+  cat > "$B/res/mipmap-anydpi-v26/ic_launcher.xml" <<'XML'
+<?xml version="1.0" encoding="utf-8"?>
+<adaptive-icon xmlns:android="http://schemas.android.com/apk/res/android">
+    <background android:drawable="@mipmap/ic_launcher" />
+    <foreground android:drawable="@android:color/transparent" />
+</adaptive-icon>
+XML
+  "$BT/aapt2" compile --dir "$B/res" -o "$B/res.zip" >/dev/null
+  RES=("$B/res.zip"); ICONATTR=' android:icon="@mipmap/ic_launcher"'
+  echo "   icon: $ICONSRC (adaptive, full bleed)"
+else
+  echo "   no sce_sys/icon0.png: the launcher will show Android's default"
+fi
+# the manifest, per game: its own application id, its own name under the launcher and that icon
 XNAME=$(printf '%s' "$GAMENAME" | sed -e 's/&/\&amp;/g' -e 's/</\&lt;/g' -e 's/"/\&quot;/g')
 sed -e "s|package=\"com.crownparkcomputing.nativ\"|package=\"$PKG\"|" \
     -e "s|android:label=\"Nativ\"|android:label=\"$XNAME\"|g" \
+    -e "s|<application|<application$ICONATTR|" \
     "$R/android/AndroidManifest.xml" > "$B/AndroidManifest.xml"
 "$BT/aapt2" link -I "$PLAT/android.jar" --manifest "$B/AndroidManifest.xml" \
-    --min-sdk-version 28 --target-sdk-version 35 -o "$B/base.apk" >/dev/null
+    --min-sdk-version 28 --target-sdk-version 35 -o "$B/base.apk" "${RES[@]}" >/dev/null
 (cd "$B" && zip -q -r base.apk classes.dex lib)
 "$BT/zipalign" -f 4 "$B/base.apk" "$B/aligned.apk"
 "$BT/apksigner" sign --ks "$HOME/.android/debug.keystore" --ks-pass pass:android \
