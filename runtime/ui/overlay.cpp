@@ -110,7 +110,22 @@ void settings_save(void);
 
 static ImGuiContext *g_ctx;
 static bool g_has_window;      /* overlay_init was given a real SDL_Window: the platform backend is live */
-static SDL_Window *g_window;   /* the same window (unused for sizing: the menu is a fixed point size) */
+static SDL_Window *g_window;   /* the same window: how much room the menu has to be drawn in */
+
+/* HOW BIG THE MENU IS: twice the old size wherever there is room for it. The sizes in ui_theme.h are
+ * points at a 15-point base and every layout here is in em of that, so this one number moves the lot
+ * -- text, padding, rounding and all.
+ *
+ * It was a flat 1, which read well enough on a monitor and was too small to use on a handheld. The
+ * only reason not to simply double it is a window too short to hold the result: at 2 the menu wants
+ * about 1000 pixels of height, so a 544-tall window would show two rows. Hence the height rule --
+ * full size from about 1080 up, scaling back below that, never under the size it used to be. */
+static float menu_scale(void) {
+	int h = 0;
+	if (g_window) { int w = 0; SDL_GetWindowSizeInPixels(g_window, &w, &h); }
+	const float s = h > 0 ? (float)h / 540.0f : 2.0f;
+	return s < 1.0f ? 1.0f : s > 2.0f ? 2.0f : s;
+}
 /* give the page's first control the focus. Set when the menu opens and when L1/R1 changes section:
  * ImGui moves the focus with the d-pad from whatever holds it, so with NOTHING holding it the pad
  * does nothing at all and the menu looks dead. ImGui focuses a window's first item itself when the
@@ -136,13 +151,19 @@ int overlay_init(SDL_GPUDevice *device, SDL_Window *window, SDL_GPUTextureFormat
 	IMGUI_CHECKVERSION();
 	g_ctx = ImGui::CreateContext();
 	ImGui::SetCurrentContext(g_ctx);
+	{	/* the window was resized, or moved to another display: ui::apply builds the style from
+		 * scratch each time, so re-applying is safe. Before NewFrame, as ImGui wants. */
+		static float applied = -1.0f;
+		const float want = menu_scale();
+		if (want != applied) { ui::apply(15.0f, want); applied = want; }
+	}
 	ImGuiIO &io = ImGui::GetIO();
 	io.IniFilename = nullptr;   /* never write imgui.ini into the game's own run directory */
 	/* (keyboard/gamepad navigation: set per frame in render_frame -- on with the full menu only) */
 	ui::load_system_font(io);   /* an explicit face: without one, ImGui 1.92's own automatic choice (vector vs. bitmap)
 		depends on a DPI scale the headless path never sets, and picks a degenerate (zero-size) one */
 	g_window = window;
-	ui::apply(15.0f, 1.0f);     /* the launcher's look (ui_theme.h), a point smaller: the menu sits over a 960x544 game */
+	ui::apply(15.0f, menu_scale());   /* the launcher's look (ui_theme.h), a point smaller: the menu sits over a 960x544 game */
 	g_has_window = window != nullptr;
 	if (g_has_window && !ImGui_ImplSDL3_InitForSDLGPU(window)) { ImGui::DestroyContext(g_ctx); g_ctx = nullptr; return 0; }
 	ImGui_ImplSDLGPU3_InitInfo info = {};
@@ -401,7 +422,7 @@ static void page_performance(void) {
 	ui::row("On-screen stats", "Frame rate and timings drawn over the game. F1 cycles them.");
 	{ static const char *const names[3] = {"Off##osd", "FPS##osd", "Full##osd"}; int lvl = metrics_osd_level(); if (ui::segmented(names, 3, &lvl)) set_osd(lvl); }
 	ui::row("Frame rate now");
-	{ char b[32]; std::snprintf(b, sizeof b, "%.0f fps", metrics_fps()); ImGui::PushFont(nullptr, ImGui::GetFontSize() * 1.6f); ImGui::TextUnformatted(b); ImGui::PopFont(); }
+	{ char b[32]; std::snprintf(b, sizeof b, "%.0f fps", metrics_fps()); ImGui::PushFont(nullptr, ui::font_base(ImGui::GetFontSize() * 1.6f)); ImGui::TextUnformatted(b); ImGui::PopFont(); }
 	ui::rows_end();
 }
 static void page_game(void) {

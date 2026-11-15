@@ -89,7 +89,15 @@ inline bool toggle(const char *id, bool *on) {   /* Off / On as a segmented pair
 	*on = v != 0;
 	return true;
 }
-inline void heading(const char *s, float size) { ImGui::PushFont(nullptr, size); ImGui::TextUnformatted(s); ImGui::PopFont(); }
+/* ImGui::PushFont's size is the one BEFORE the display scale (style.FontScaleDpi), while every size
+ * asked for here is in final pixels -- usually some multiple of GetFontSize(), which is already
+ * scaled. Passing that straight in multiplies the scale twice: at 2x a 0.88 em note came out 1.76 em,
+ * bigger than the label it explains. This converts a final size to the base PushFont wants. */
+inline float font_base(float final_px) {
+	const float cur = ImGui::GetFontSize();
+	return cur > 0 ? final_px * ImGui::GetStyle().FontSizeBase / cur : final_px;
+}
+inline void heading(const char *s, float size) { ImGui::PushFont(nullptr, font_base(size)); ImGui::TextUnformatted(s); ImGui::PopFont(); }
 inline void muted_wrapped(const char *s) { ImGui::PushStyleColor(ImGuiCol_Text, muted); ImGui::TextWrapped("%s", s); ImGui::PopStyleColor(); }
 inline void dot(const ImVec4 &c) {   /* a status dot, centred on the text line */
 	ImVec2 p = ImGui::GetCursorScreenPos(); float h = ImGui::GetTextLineHeight(), r = h * 0.22f;
@@ -120,7 +128,7 @@ inline void row(const char *label, const char *explanation = nullptr) {
 	ImGui::TableNextRow(0, ImGui::GetFrameHeight() + ImGui::GetStyle().CellPadding.y * 2);
 	ImGui::TableNextColumn();
 	ImGui::TextUnformatted(label);
-	if (explanation && *explanation) { ImGui::PushFont(nullptr, ImGui::GetFontSize() * 0.88f); muted_wrapped(explanation); ImGui::PopFont(); }
+	if (explanation && *explanation) { ImGui::PushFont(nullptr, font_base(ImGui::GetFontSize() * 0.88f)); muted_wrapped(explanation); ImGui::PopFont(); }
 	ImGui::TableNextColumn();
 }
 inline void rows_end(void) { ImGui::EndTable(); }
