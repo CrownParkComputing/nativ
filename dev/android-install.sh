@@ -89,7 +89,12 @@ ICONSRC=$(readlink -f "$OUT/fs/app0")/sce_sys/icon0.png
 RES=() ICONATTR=
 if [[ -f $ICONSRC ]]; then
   mkdir -p "$B/res/mipmap-xxhdpi" "$B/res/mipmap-anydpi-v26"
+  # the art under TWO names: ic_launcher.png is the icon itself for Android before 26, and
+  # ic_launcher_art.png is what the adaptive icon's background layer points at. They must differ:
+  # pointing the layer at @mipmap/ic_launcher resolves, on 26 and later, to the adaptive XML itself --
+  # a circular reference, so the icon fails to inflate and the launcher falls back to Android's robot.
   cp "$ICONSRC" "$B/res/mipmap-xxhdpi/ic_launcher.png"
+  cp "$ICONSRC" "$B/res/mipmap-xxhdpi/ic_launcher_art.png"
   # ...as an ADAPTIVE icon, with the art as the background layer. A legacy icon is wrapped by the
   # launcher in a white rounded backdrop and shrunk inside it; as the background layer the art is
   # scaled to the whole 108dp canvas and the launcher's mask cuts the shape straight out of it, so it
@@ -97,7 +102,7 @@ if [[ -f $ICONSRC ]]; then
   cat > "$B/res/mipmap-anydpi-v26/ic_launcher.xml" <<'XML'
 <?xml version="1.0" encoding="utf-8"?>
 <adaptive-icon xmlns:android="http://schemas.android.com/apk/res/android">
-    <background android:drawable="@mipmap/ic_launcher" />
+    <background android:drawable="@mipmap/ic_launcher_art" />
     <foreground android:drawable="@android:color/transparent" />
 </adaptive-icon>
 XML
