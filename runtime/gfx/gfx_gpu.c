@@ -3758,8 +3758,21 @@ static int view_mapping(uint32_t tgt_addr, uint32_t tgt_stride, uint32_t tgt_w, 
 		uint64_t end = (uint64_t)u->off_bytes + ((uint64_t)(tex->height - 1) * u->tex_stride + tex->width) * tex_bpp;
 		return end <= (uint64_t)tgt_stride * tgt_h * tgt_bpp + tgt_bpp;   /* +1 pixel: a byte view at +4 of an F32F32 target ends one word past it (the shader clamps that read) */
 	}
-	if (u->off_bytes || tex->height > tgt_h || tex_bpp != tgt_bpp) return 0;
-	if (layout == 2 && tgt_type == 1 && ((tex->width + 31u) & ~31u) == tgt_stride) { u->tex_stride = tgt_stride; return 1; }   /* the same 32x32 tiling (the target's width here is its stride, a whole number of tiles): identity */
+	if (tex->height > tgt_h || tex_bpp != tgt_bpp) return 0;
+	if (layout == 2 && tgt_type == 1 && ((tex->width + 31u) & ~31u) == tgt_stride) {   /* the same 32x32 tiling (the target's width here is its stride, a whole number of tiles) */
+		/* ...at the target's address, or a whole number of TILE ROWS down it. A tile row is 32 image
+		 * rows and, at this width, that many linear rows of the same pixels -- so the band a texture
+		 * names in memory is the band srcpix's linear step lands on, and the mapping stays the
+		 * identity within it. WipEout 2048 reflects the city into a 256x1536 tiled target and samples
+		 * 256x128 bands of it; requiring the address to match exactly sent each one down the
+		 * guest-memory path, which is a fence wait on the frame's whole GPU queue -- 24-32 ms of a
+		 * 60 ms frame. Anything not on a tile-row boundary still goes below. */
+		const uint32_t per = tgt_stride * 32u * tgt_bpp;
+		if (u->off_bytes % per) return 0;
+		if (u->off_bytes / per * 32u + tex->height > tgt_h) return 0;
+		u->tex_stride = tgt_stride; return 1;
+	}
+	if (u->off_bytes) return 0;
 	if (layout == 1 && tgt_type == 2 && tex->width == tgt_w) { u->tex_stride = tgt_stride; return 1; }   /* the same Morton order over the same square */
 	return 0;
 }
@@ -3873,26 +3886,37 @@ static TexEntry *mip_view(const GfxTexture *tex, TargetEntry *best, SDL_GPUTextu
  * as the target. A band is contiguous in memory for a linear target, and for a 32x32-tiled one when
  * it is a whole number of tile rows -- anything else (Morton, a part-width face) is left to the paths
  * below. 0: not that shape. */
+/* why a cube map the GPU rendered was NOT taken as a view, said once per reason: the guest-memory
+ * path it falls to is a fence wait on the frame, so a case this declines is worth knowing about
+ * rather than guessing at from a frame rate. */
+static void cube_view_no(const GfxTexture *tex, const TargetEntry *best, const char *why) {
+	static const char *said[8]; static int n;
+	for (int i = 0; i < n; i++) if (said[i] == why) return;
+	if (n < 8) said[n++] = why;
+	fprintf(stderr, "    gpu: cube map %#x fmt %#x %ux%u u%#x over target %#x %ux%u type %d kind %d: no view -- %s\n",
+	        tex->data, tex->format, tex->width, tex->height, tex->u_mode, best->addr, best->width, best->height, best->type, best->kind, why);
+}
 static TexEntry *cube_view(const GfxTexture *tex, TargetEntry *best) {
-	if (((tex->u_mode >> 4) & 3) != 3 || gfx_texture_cube_levels(tex) != 1) return 0;
-	if ((tex->format & 0xfff) || (tex->format & 0x9F007000u) != 0x0c000000u) return 0;   /* (mip_view's test: a linear U8U8U8U8 (ABGR) at its natural stride) */
-	if (best->kind != TK_U8 && best->kind != TK_U8S) return 0;
-	if (best->type != 0 && best->type != 1) return 0;
+	if (((tex->u_mode >> 4) & 3) != 3) return 0;
+	if (gfx_texture_cube_levels(tex) != 1) { cube_view_no(tex, best, "it has mip levels"); return 0; }
+	if ((tex->format & 0xfff) || (tex->format & 0x9F007000u) != 0x0c000000u) { cube_view_no(tex, best, "not U8U8U8U8 in the default order at its natural stride"); return 0; }   /* (mip_view's test) */
+	if (best->kind != TK_U8 && best->kind != TK_U8S) { cube_view_no(tex, best, "the target is not an 8-bit one"); return 0; }
+	if (best->type != 0 && best->type != 1) { cube_view_no(tex, best, "the target is neither linear nor 32x32 tiled"); return 0; }
 	uint32_t y0[6];
 	for (int f = 0; f < 6; f++) {
 		GfxTexture x; gfx_texture_face_level(tex, f, 0, &x);
-		if (x.width != best->width || x.data < best->addr) return 0;
+		if (x.width != best->width || x.data < best->addr) { cube_view_no(tex, best, "a face is not the target's full width, or starts before it"); return 0; }
 		const uint32_t off = x.data - best->addr;
 		if (best->type == 0) {                                  /* linear: whole rows */
 			const uint32_t pitch = 4u * best->width;
-			if (off % pitch) return 0;
+			if (off % pitch) { cube_view_no(tex, best, "a face does not start on a row"); return 0; }
 			y0[f] = off / pitch;
 		} else {                                                /* 32x32 tiles: whole tile rows */
 			const uint32_t per = 4u * best->width * 32u;
-			if (off % per || x.height % 32u) return 0;
+			if (off % per || x.height % 32u) { cube_view_no(tex, best, "a face is not a whole number of tile rows"); return 0; }
 			y0[f] = off / per * 32u;
 		}
-		if (y0[f] + x.height > best->height) return 0;
+		if (y0[f] + x.height > best->height) { cube_view_no(tex, best, "the six faces do not fit in the target"); return 0; }
 	}
 	GfxTexture f0; gfx_texture_face_level(tex, 0, 0, &f0);
 	const SDL_GPUTextureFormat fmt = kind_format(best->kind);
