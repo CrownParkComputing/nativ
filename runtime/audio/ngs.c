@@ -329,7 +329,16 @@ static void h_def_compressor(Cpu *c) { RET(defn(DEF_COMPRESSOR)); }
 static void h_def_sidechain(Cpu *c) { RET(defn(DEF_SIDECHAIN)); }
 
 /* ---- system and racks */
-static void h_sys_mem(Cpu *c) { WR32(A1, 0x10000); RET(0); }   /* (params, *size) */
+/* (params, *size): how much memory libngs wants for the system. Nothing here uses the block the
+ * game then hands to SystemInit -- the voices are the host's -- so the figure only has to be one a
+ * game will accept, and it must be SMALL: a game that keeps its NGS work area in a fixed buffer
+ * checks this against the buffer's size, and 0x10000 overflowed one. DARIUSBURST caps it at 0x2000
+ * and, told 0x10000, its own "how big is the system" helper returned -1 -- which its caller then
+ * passed to memset as a length, zeroing the guest address space upward from its heap, through every
+ * thread stack above it. (The Vita faults on that at once; here the whole 4 GB is mapped, so it ran
+ * on, and the damage first showed three frames later as libgxm's display-queue thread losing the
+ * game's flip callback.) 0x1000, as a rack's. */
+static void h_sys_mem(Cpu *c) { WR32(A1, 0x1000); RET(0); }
 static void h_sys_init(Cpu *c) {   /* (memory, ?, SceNgsSystemInitParams*, *handle): maxRacks, maxVoices, granularity, sampleRate, maxModules */
 	if (A2) { granularity = RD32(A2 + 8) ? RD32(A2 + 8) : 512; sample_rate = RD32(A2 + 12) ? RD32(A2 + 12) : 48000; }
 	fprintf(stderr, "    ngs: system, granularity %u at %u Hz\n", granularity, sample_rate);

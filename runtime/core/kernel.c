@@ -490,7 +490,7 @@ static void h_create_thread(Cpu *c) {   /* (name, entry, priority, stack size, a
 	t->attr = STK(0); t->affinity = STK(1);
 	snprintf(t->name, sizeof t->name, "%s", A0 ? (char *)G(A0) : "?");
 	pthread_mutex_unlock(&klock);
-	fprintf(stderr, "    thread '%s' uid %#x entry %#x stack %#x prio %d affinity %#x\n", t->name, t->uid, t->entry, t->stack_size, t->prio, t->affinity);
+	fprintf(stderr, "    thread '%s' uid %#x entry %#x stack %#x..%#x (%#x) prio %d affinity %#x\n", t->name, t->uid, t->entry, t->stack, t->stack + t->stack_size, t->stack_size, t->prio, t->affinity);
 	RET(t->uid);
 }
 static void thread_done(Thread *t, uint32_t status) {
