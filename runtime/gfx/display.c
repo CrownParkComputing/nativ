@@ -291,6 +291,11 @@ static void vb_wait_until(uint64_t target, uint32_t count) {
  * (Multi(2) after SetFrameBuf) took three or four edges a frame: 50-68 ms. sceDisplayWaitSetFrameBuf
  * / Multi(n): n edges after the one the last SetFrameBuf lands on. */
 static void h_wait_vblank(Cpu *c) { vb_wait_until(vb_now() + 1, 1); RET(0); }
+/* (port): the display's vertical blank counter since boot. Stubbed it answered 0 for ever, and a game
+ * that paces itself by POLLING this rather than by waiting never gets anywhere: WipEout 2048 called it
+ * 295 million times and presented two frames. vb_now() is the same 60 Hz grid every wait here counts
+ * against, so a poller and a waiter see one clock. */
+static void h_display_vcount(Cpu *c) { RET((uint32_t)vb_now()); }
 static void h_wait_vblank_multi(Cpu *c) {
 	uint32_t n = A0 ? A0 : 1; if (n > 8) n = 8;
 	uint64_t now = vb_now(), base = vb_last_target && vb_last_target + n > now ? vb_last_target : now;
@@ -972,6 +977,7 @@ const HleEntry hle_display[] = {
 	{"sceDisplayWaitVblankStartCB", h_wait_vblank_cb}, {"sceDisplayWaitVblankStartMultiCB", h_wait_vblank_multi_cb},
 	{"sceDisplayWaitSetFrameBufCB", h_wait_setbuf_cb}, {"sceDisplayWaitSetFrameBufMultiCB", h_wait_setbuf_multi_cb},
 	{"sceDisplayRegisterVblankStartCallback", h_register_vblank_cb}, {"sceDisplayUnregisterVblankStartCallback", h_unregister_vblank_cb},
+	{"sceDisplayGetVcount", h_display_vcount},
 	{"sceAudioOutOpenPort", h_audio_open}, {"sceAudioOutOutput", h_audio_output}, {"sceAudioOutSetVolume", h_audio_set_volume},
 	{"sceCtrlPeekBufferPositive", h_ctrl_peek}, {"sceTouchPeek", h_touch_peek},
 	{"sceCtrlReadBufferPositive", h_ctrl_read}, {"sceTouchRead", h_touch_read}, {"sceTouchGetPanelInfo", h_touch_panel_info},
