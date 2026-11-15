@@ -51,13 +51,33 @@ class Unsupported(Exception):
 
 
 class Fn:
-    def __init__(self, entry, insns, entries, arm=False):
+    """A function and its decoded instructions. The instructions are by far the largest thing a
+    recompile holds -- a capstone instruction with its operands is ~3 KB, and a big game has millions
+    of them -- so a function can drop them once the facts the whole-program passes want are taken
+    (below), and decode them again when it is built. See decode_again()."""
+    def __init__(self, entry, insns, entries, arm=False, spans=None):
         self.entry, self.insns, self.entries, self.arm = entry, insns, entries, arm
+        self.spans = spans                # how to decode these instructions again, when there is a way
         self.pc_off = 8 if arm else 4     # a PC read sees the instruction's address + 8 (ARM) or + 4 (Thumb)
         self.tbit = 0 if arm else 1       # what a call's return address carries
         self.addrs = {i.address for i in insns}
+        self.n = len(insns)               # kept: the split sizes the parts by instruction count
         self.lines, self.unimpl = [], []
         self.ordered = ORDERED_LOADS[0] and any(i.mnemonic in SYNC_MN for i in insns)
+        self.calls_blx = sorted({i.operands[0].imm & 0xffffffff for i in insns
+                                 if i.mnemonic == "blx" and i.operands and i.operands[0].type == ARM_OP_IMM})
+        self.calls_bl = sorted({i.operands[0].imm & 0xffffffff for i in insns
+                                if i.mnemonic == "bl" and i.operands and i.operands[0].type == ARM_OP_IMM})
+
+    def release(self):
+        """drop the instructions, keeping the facts above; only a function with spans can get them
+        back, so one built from another's instructions (an alternate entry) keeps hold of them"""
+        if self.spans is not None: self.insns = None
+
+    def decoded(self, decode):
+        """the instructions, decoded again if they were dropped"""
+        if self.insns is None: self.insns = decode(self.spans, self.arm)
+        return self.insns
 
     def reg(self, rid):
         n = md.reg_name(rid)
@@ -1176,6 +1196,7 @@ class Fn:
         return lines
 
 
+
 def main():
     if len(sys.argv) < 3:
         sys.exit(__doc__)
@@ -1264,37 +1285,38 @@ def main():
                 spans.append([spans[-1][1] + 1, lo - 1])   # the hole
             spans.append([lo, hi])
         fspans[entry] = spans
-        fns.append(Fn(entry, decode(spans, False), eset))
+        f = Fn(entry, decode(spans, False), eset, spans=spans)
+        f.junk = junk(f.insns)            # taken now: the ARM test below wants it after the release
+        f.release()
+        fns.append(f)
     # ARM-mode functions: a Thumb "blx #imm" always switches to ARM, so its targets are ARM; from
     # ARM code, "bl" stays ARM and "blx #imm" goes back to Thumb (propagated to a fixed point); a
     # function only reached through pointers is ARM when its Thumb decode holds instructions no Vita
     # code has (coprocessors other than VFP/NEON/system) and its ARM decode doesn't
     by_entry = {f.entry: f for f in fns}
     arm = set()
-    def calls(f, mnem):
-        for i in f.insns:
-            if i.mnemonic == mnem and i.operands and i.operands[0].type == ARM_OP_IMM:
-                yield i.operands[0].imm & 0xffffffff
-    todo = [t for f in fns for t in calls(f, "blx") if t in by_entry]
+    todo = [t for f in fns for t in f.calls_blx if t in by_entry]
     todo += [a for a in d.get("arm", []) if a in by_entry]   # the analysis decoded these as ARM (its exports and calls say so)
     for f in fns:
-        if junk(f.insns) and not junk(decode(fspans[f.entry], True)):
+        if f.junk and not junk(decode(fspans[f.entry], True)):
             todo.append(f.entry)
     while todo:
         e = todo.pop()
         if e in arm or e not in by_entry:
             continue
         arm.add(e)
-        f = Fn(e, decode(fspans[e], True), eset, arm=True)
+        f = Fn(e, decode(fspans[e], True), eset, arm=True, spans=fspans[e])
+        f.junk = junk(f.insns)
+        f.release()
         by_entry[e] = f
-        todo += [t for t in calls(f, "bl") if t in by_entry]
+        todo += [t for t in f.calls_bl if t in by_entry]
     fns = [by_entry[f.entry] for f in fns]
     if arm:
         print(f"{len(arm)} ARM-mode functions")
     # code reached only through a pointer (a callback the module installs for itself) can sit inside
     # what Ghidra made one function: any Thumb code pointer in the image's words that lands on an
     # instruction of a function, not at its entry, gets its own entry (that function, entered there)
-    starts = {i.address: f for f in fns for i in f.insns}
+    starts = {a: f for f in fns for a in f.addrs}
     arm_starts = {a for a, f in starts.items() if f.arm}
     alt = set()
     # a word that is itself a decoded ARM instruction holds no pointer, however it looks: an ARM
@@ -1311,7 +1333,9 @@ def main():
                 alt.add(a)
     for a in sorted(alt):
         eset.add(a)
-        fns.append(Fn(a, starts[a].insns, eset, arm=starts[a].arm))
+        o = starts[a]
+        fns.append(Fn(a, o.decoded(decode), eset, arm=o.arm, spans=o.spans))
+        o.release()
     # small functions only reached through a pointer (a virtual method in a .rodata vtable) can sit
     # in a gap no Ghidra body covers: a Thumb pointer into such a gap gets a function decoded from
     # there to the next body, when that decodes cleanly to a return
@@ -1344,7 +1368,7 @@ def main():
         print(f"{ngap} functions in gaps between Ghidra's bodies (reached through pointers)")
     for a in sorted(set(HOOKS) - {f.entry for f in fns}):   # a typo, or an address that moved: say so now, not after a run shows nothing changed
         print(f"warning: --hooks {a:#x}:{HOOKS[a]} is not a function entry; that hook will never run")
-    insn_addrs = {i.address for f in fns for i in f.insns}
+    insn_addrs = {a for f in fns for a in f.addrs}
     for a in sorted(set(IHOOKS) - insn_addrs):
         print(f"warning: --insn-hooks {a:#x}:{IHOOKS[a]} is not an instruction of any function; that hook will never run")
     decls = [f"extern void recomp_hook_{n}(Cpu *c);" for n in sorted(set(HOOKS.values()))]
@@ -1359,7 +1383,7 @@ def main():
         out = [f'#include "{os.path.basename(base)}.h"']
     else:
         out += decls
-    per = (sum(len(f.insns) for f in fns) // max(nsplit, 1)) + 1
+    per = (sum(f.n for f in fns) // max(nsplit, 1)) + 1
     k = acc = 0
     # Each part is written as it fills, rather than every function's C being held until the end: the
     # functions go into the parts in order, so a part is finished the moment the next one starts.
@@ -1369,7 +1393,8 @@ def main():
     pf = open(f"{base}_part0.c", "w") if nsplit else None
     if pf: pf.write(inc + "\n")
     for f in fns:
-        n = len(f.insns)
+        n = f.n
+        f.decoded(decode)                 # back from its spans, if it let them go
         body = f.build()
         total += n
         bad += f.unimpl
@@ -1384,7 +1409,7 @@ def main():
         # a function's decoded instructions are finished with the moment it is written: only its entry
         # and whether it is ARM are wanted afterwards (the dispatch tables below). Holding a million of
         # them to the end is most of what this costs on a big game.
-        f.insns = ()
+        f.insns = None if f.spans is not None else ()
     if pf: pf.close()
     for n in range(k + 1, nsplit):   # the parts no function reached still have to exist for the build
         open(f"{base}_part{n}.c", "w").write(inc + "\n")
