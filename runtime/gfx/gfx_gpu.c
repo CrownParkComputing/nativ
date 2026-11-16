@@ -3292,10 +3292,31 @@ static void readback_enqueue(TargetEntry *e) {
 		watch = !getenv("RECOMP_GPU_NO_READ_WATCH") && gwatch_on(); if (watch) gwatch_set_read_hook(read_hook); }
 	if (watch) read_watch_marks();
 	if (!e || !e->addr || !e->gpu_dirty) return;
-	if (!all && !e->cpu_reads && ((e->sampled && e->kind != TK_F32) || !maxpx || e->width * e->height > (uint32_t)maxpx)) {
+	/* A RING of identical targets is read as one. The read watch marks the buffer the CPU actually
+	 * touched, but a game that rotates several same-shaped targets writes a different one each frame,
+	 * and the ones it has not touched yet keep a stale image in guest memory. WipEout 2048 rotates
+	 * three 256x136 targets 0x28000 apart for its luminance: one was marked, the other two were left
+	 * on the GPU, and the exposure read never-written memory on two frames in three -- the race
+	 * preview blew out to white and back, frame after frame. So a target counts as read when any
+	 * target of its exact shape has been read. */
+	int reads = e->cpu_reads;
+	for (int i = 0; !reads && i < ntargets; i++) {
+		const TargetEntry *t = &targets[i];
+		if (t->cpu_reads && t->width == e->width && t->height == e->height && t->format == e->format && t->type == e->type && t->kind == e->kind) reads = 1;
+	}
+	if (!all && !reads && ((e->sampled && e->kind != TK_F32) || !maxpx || e->width * e->height > (uint32_t)maxpx)) {
 		if (watch) { GfxTarget g = target_entry_as_gfx(e); gwatch_read_arm(e->addr, (uint32_t)gfx_target_bpp(&g) * e->width * e->height); }
 		return;
 	}   /* RECOMP_GPU_READBACK_ALL=1 (diagnosis): every scene's target, so guest memory holds what the console's would -- does the game read a target on the CPU the rule above misses? */
+	{	/* said once per target: a readback paces the CPU to the GPU (the forced landing waits as long
+		 * as the GPU is behind), so which target is being read back, and on whose account, is the
+		 * first thing worth knowing when a game spends its frame in "readback waits". */
+		static uint32_t said[8]; static int nsaid;
+		int seen = 0; for (int i = 0; i < nsaid; i++) if (said[i] == e->addr) seen = 1;
+		if (!seen && nsaid < 8) { said[nsaid++] = e->addr;
+			fprintf(stderr, "    gpu: target %#x %ux%u kind %d read back every scene -- %s\n", e->addr, e->width, e->height, e->kind,
+			        e->cpu_reads ? "the game reads it on the CPU" : reads ? "the game reads another target of its shape (a rotated ring)" : "a small float target (RECOMP_GPU_READBACK_MAX)"); }
+	}
 	readbacks_complete(e->addr, e->addr + 1);   /* an older copy of this one first */
 	if (nreadbacks == MAXREADBACK) readbacks_complete(0, ~0u);
 	uint32_t n = kind_bytes(e->kind) * e->width * e->height;
